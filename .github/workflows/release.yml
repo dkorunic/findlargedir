@@ -1,0 +1,112 @@
+name: release
+on:
+  push:
+    tags:
+    - "[0-9]+.[0-9]+.[0-9]+"
+jobs:
+  create-release:
+    name: create-release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.release.outputs.upload_url }}
+      fl_version: ${{ env.FL_VERSION }}
+    steps:
+      - name: Get the release version from the tag
+        shell: bash
+        if: env.FL_VERSION == ''
+        run: |
+          echo "FL_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "version is: ${{ env.FL_VERSION }}"
+      - name: Create GitHub release
+        id: release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.FL_VERSION }}
+          release_name: ${{ env.FL_VERSION }}
+
+  build-release:
+    name: build-release
+    needs: ['create-release']
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO: cargo
+      TARGET_FLAGS: ""
+      TARGET_DIR: ./target
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        build: [linux, linux-arm, macos]
+        include:
+        - build: linux
+          os: ubuntu-latest
+          rust: stable
+          target: x86_64-unknown-linux-musl
+        - build: linux-arm
+          os: ubuntu-latest
+          rust: stable
+          target: arm-unknown-linux-gnueabihf
+        - build: macos
+          os: macos-latest
+          rust: stable
+          target: x86_64-apple-darwin
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 1
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        target: ${{ matrix.target }}
+
+    - name: Use Cross
+      shell: bash
+      run: |
+        cargo install cross
+        echo "CARGO=cross" >> $GITHUB_ENV
+        echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+        echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+    - name: Show command used for Cargo
+      run: |
+        echo "cargo command is: ${{ env.CARGO }}"
+        echo "target flag is: ${{ env.TARGET_FLAGS }}"
+        echo "target dir is: ${{ env.TARGET_DIR }}"
+
+    - name: Build release binary
+      run: ${{ env.CARGO }} build --verbose --release ${{ env.TARGET_FLAGS }}
+
+    - name: Strip release binary (linux and macos)
+      if: matrix.build == 'linux' || matrix.build == 'macos'
+      run: strip "target/${{ matrix.target }}/release/findlargedir"
+
+    - name: Strip release binary (arm)
+      if: matrix.build == 'linux-arm'
+      run: |
+        docker run --rm -v \
+          "$PWD/target:/target:Z" \
+          rustembedded/cross:arm-unknown-linux-gnueabihf \
+          arm-linux-gnueabihf-strip \
+          /target/arm-unknown-linux-gnueabihf/release/findlargedir
+
+    - name: Build archive
+      shell: bash
+      run: |
+        outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
+        staging="findlargedir-${{ needs.create-release.outputs.fl_version }}-${{ matrix.target }}"
+        cp {README.md,LICENSE} "$staging/"
+
+    - name: Upload release archive
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ${{ env.ASSET }}
+        asset_name: ${{ env.ASSET }}
+        asset_content_type: application/octet-stream

@@ -1,0 +1,29 @@
+[package]
+name = "findlargedir"
+version = "0.1.0"
+authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
+categories = ["command-line-utilities"]
+description = "find all blackhole directories with a huge amount of filesystem entries in a flat structure"
+repository = "https://github.com/dkorunic/findlargedir"
+readme = "README.md"
+license = "MIT"
+exclude = [".gitignore"]
+edition = "2021"
+
+[dependencies]
+jwalk = "0.6.0"
+rayon = "1.5.3"
+tikv-jemallocator = "0.5.0"
+num_cpus = "1.13.1"
+tempfile = "3.3.0"
+spinach = "2.1.0"
+anyhow = "1.0.65"
+human_format = "1.0.3"
+human_bytes = { version = "0.3.1", features = ["fast"] }
+clap = { version = "3.2.22", features = ["derive"] }
+ctrlc = { version = "3.2.3", features = ["termination"] }
+rm_rf = "0.6.2"
+ansi_term = "0.12.1"
+
+[profile.release]
+lto = true
