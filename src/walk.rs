@@ -55,32 +55,35 @@ fn process_dir_entry<E>(
                 let dir_entry_metadata = fs::metadata(&full_path)
                     .with_context(|| format!("Unable to stat {} directory", &full_path.display()))
                     .unwrap();
-                if dir_entry_metadata.dev() == path_metadata.dev() {
-                    let size = dir_entry_metadata.size();
-                    let approx_files = size / size_inode_ratio;
 
-                    if approx_files > blacklist_threshold {
-                        println!(
-                            "Found very large directory {} with inode size {}, approx {} files",
-                            full_path.display(),
-                            human_bytes(size as f64),
-                            Red.paint(Formatter::new().format(approx_files as f64)),
-                        );
-                        dir_entry.read_children_path = None;
-                    } else if approx_files > alert_threshold {
-                        println!(
-                            "Found large directory {} with inode size {}, approx {} files",
-                            full_path.display(),
-                            human_bytes(size as f64),
-                            Yellow.paint(Formatter::new().format(approx_files as f64)),
-                        );
-                    }
-                } else if one_filesystem {
+                if one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev()) {
                     println!(
                         "Identified filesystem boundary at {}, skipping...",
                         full_path.display()
                     );
                     dir_entry.read_children_path = None;
+
+                    return;
+                }
+
+                let size = dir_entry_metadata.size();
+                let approx_files = size / size_inode_ratio;
+
+                if approx_files > blacklist_threshold {
+                    println!(
+                        "Found very large directory {} with inode size {}, approx {} files",
+                        full_path.display(),
+                        human_bytes(size as f64),
+                        Red.paint(Formatter::new().format(approx_files as f64)),
+                    );
+                    dir_entry.read_children_path = None;
+                } else if approx_files > alert_threshold {
+                    println!(
+                        "Found large directory {} with inode size {}, approx {} files",
+                        full_path.display(),
+                        human_bytes(size as f64),
+                        Yellow.paint(Formatter::new().format(approx_files as f64)),
+                    );
                 }
             }
         }
