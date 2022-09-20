@@ -18,22 +18,22 @@ static GLOBAL: Jemalloc = Jemalloc;
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    #[clap(short, long, default_value_t = calibrate::DEFAULT_TEST_COUNT)]
-    calibration_count: u64,
-
-    #[clap(short, long, default_value_t = false)]
+    #[clap(short, long, action = clap::ArgAction::Set, default_value_t = false)]
     accurate: bool,
 
-    #[clap(short, long, default_value_t = true)]
+    #[clap(short, long, action = clap::ArgAction::Set, default_value_t = true)]
     one_filesystem: bool,
 
-    #[clap(short = 'A', long, default_value_t = walk::ALERT_COUNT)]
+    #[clap(short, long, value_parser, default_value_t = calibrate::DEFAULT_TEST_COUNT)]
+    calibration_count: u64,
+
+    #[clap(short = 'A', long, value_parser, default_value_t = walk::ALERT_COUNT)]
     alert_threshold: u64,
 
-    #[clap(short = 'B', long, default_value_t = walk::BLACKLIST_COUNT)]
+    #[clap(short = 'B', long, value_parser, default_value_t = walk::BLACKLIST_COUNT)]
     blacklist_threshold: u64,
 
-    #[clap(required = true, allow_hyphen_values = true)]
+    #[clap(required = true, value_parser)]
     path: Vec<String>,
 }
 
@@ -62,6 +62,8 @@ fn main() -> Result<(), Error> {
         let size_inode_ratio =
             calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_calibrate, args.calibration_count)
                 .context("Unable to calibrate inode to size ratio")?;
+
+        println!("Please wait a few seconds while removing calibration test directory...");
         drop(tmp_dir);
 
         println!("Scanning filesystem path {} started", &path);

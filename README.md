@@ -1,5 +1,4 @@
-findlargedir
-===
+# findlargedir
 
 [![GitHub license](https://img.shields.io/github/license/dkorunic/findlargedir.svg)](https://github.com/dkorunic/findlargedir/blob/master/LICENSE.txt)
 [![GitHub release](https://img.shields.io/github/release/dkorunic/findlargedir.svg)](https://github.com/dkorunic/findlargedir/releases/latest)
@@ -12,9 +11,8 @@ Program will **not follow symlinks** and **requires r/w permissions** to be able
 
 ## Caveats
 
-* requires r/w privileges for an each filesystem being tested, it will also create a temporary directory with a lot of temporary files which are cleaned up afterwards
-* accurate mode (`-a`) can cause an excessive I/O and an excessive memory use; only use when appropriate
-
+- requires r/w privileges for an each filesystem being tested, it will also create a temporary directory with a lot of temporary files which are cleaned up afterwards
+- accurate mode (`-a`) can cause an excessive I/O and an excessive memory use; only use when appropriate
 
 ## Usage
 
@@ -38,3 +36,4 @@ OPTIONS:
 When using **accurate mode** (`-a` parameter) beware that large directory lookups will stall the process completely for extended periods of time. What this mode does is basically a secondary fully accurate pass on a possibly offending directory calculating exact number of entries.
 
 If you want to avoid descending into mounted filesystems (as in find -xdev option), use **onefilesystem mode** with `-o` parameter and this toggled by default.
+

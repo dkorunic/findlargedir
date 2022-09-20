@@ -9,7 +9,7 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-pub const DEFAULT_TEST_COUNT: u64 = 10000;
+pub const DEFAULT_TEST_COUNT: u64 = 100_000;
 const ERROR_EXIT: i32 = 1;
 
 pub fn get_inode_ratio(

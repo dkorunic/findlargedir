@@ -19,7 +19,7 @@ jobs:
           echo "version is: ${{ env.FL_VERSION }}"
       - name: Create GitHub release
         id: release
-        uses: actions/create-release@v1
+        uses: actions/create-release@v1.1.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -54,12 +54,12 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         fetch-depth: 1
 
     - name: Install Rust
-      uses: dtolnay/rust-toolchain@v1
+      uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
         target: ${{ matrix.target }}
@@ -99,10 +99,14 @@ jobs:
       run: |
         outdir="$(ci/cargo-out-dir "${{ env.TARGET_DIR }}")"
         staging="findlargedir-${{ needs.create-release.outputs.fl_version }}-${{ matrix.target }}"
-        cp {README.md,LICENSE} "$staging/"
+        mkdir -p "$staging"
+        cp {README.md,LICENSE} "$staging"
+        cp "target/${{ matrix.target }}/release/findlargedir" "$staging"
+        tar -cJf "$staging.tar.xz" "$staging"
+        echo "ASSET=$staging.tar.xz" >> $GITHUB_ENV
 
     - name: Upload release archive
-      uses: actions/upload-release-asset@v1.0.1
+      uses: actions/upload-release-asset@v1.0.2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
