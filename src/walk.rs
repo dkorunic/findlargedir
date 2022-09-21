@@ -20,13 +20,14 @@ pub fn parallel_search(
     path: &PathBuf,
     path_metadata: Metadata,
     size_inode_ratio: u64,
-    shutdown: Arc<AtomicBool>,
+    shutdown: &Arc<AtomicBool>,
     args: &args::Args,
 ) {
-    let (one_filesystem, alert_threshold, blacklist_threshold) = (
+    let (one_filesystem, alert_threshold, blacklist_threshold, shutdown) = (
         args.one_filesystem,
         args.alert_threshold,
         args.blacklist_threshold,
+        shutdown.clone(),
     );
 
     for _ in WalkDir::new(path)
@@ -34,8 +35,8 @@ pub fn parallel_search(
         .sort(false)
         .parallelism(Parallelism::RayonNewPool(num_cpus::get()))
         .process_read_dir(move |_, _, _, children| {
-            if shutdown.load(Ordering::Relaxed) {
-                println!("Requested program exit, stopping scan...",);
+            if shutdown.load(Ordering::SeqCst) {
+                println!("Requested program exit, stopping scan...");
                 process::exit(ERROR_EXIT);
             }
 

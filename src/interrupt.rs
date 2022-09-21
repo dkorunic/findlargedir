@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub fn setup_interrupt_handler(shutdown: Arc<AtomicBool>) -> Result<(), Error> {
     ctrlc::set_handler(move || {
-        shutdown.store(true, Ordering::Relaxed);
+        shutdown.store(true, Ordering::SeqCst);
     })
     .context("Unable to set Ctrl-C handler")?;
 

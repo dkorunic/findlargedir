@@ -71,7 +71,7 @@ fn main() -> Result<(), Error> {
             &path,
             path_metadata,
             size_inode_ratio,
-            shutdown_scan.clone(),
+            &shutdown_scan,
             &args,
         );
 

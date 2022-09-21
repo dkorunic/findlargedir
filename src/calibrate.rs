@@ -25,7 +25,7 @@ pub fn get_inode_ratio(
     let s = Spinach::new("Starting calibration...");
 
     for i in 0..test_count {
-        if shutdown.load(Ordering::Relaxed) {
+        if shutdown.load(Ordering::SeqCst) {
             s.stop();
             println!("Requested program exit, stopping and deleting temporary files...",);
             ensure_removed(test_path)
