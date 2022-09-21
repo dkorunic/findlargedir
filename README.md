@@ -20,10 +20,6 @@ Program will **not follow symlinks** and **requires r/w permissions** to be able
 ## Usage
 
 ```shell
-findlargedir 0.1.0
-Dinko Korunic <dinko.korunic@gmail.com>
-find all blackhole directories with a huge amount of filesystem entries in a flat structure
-
 USAGE:
     findlargedir [OPTIONS] <PATH>...
 
@@ -48,6 +44,9 @@ OPTIONS:
 
     -o, --one-filesystem <ONE_FILESYSTEM>
             [default: true] [possible values: true, false]
+
+    -t, --calibration-path <CALIBRATION_PATH>
+
 
     -V, --version
             Print version information

@@ -36,20 +36,16 @@ fn main() -> Result<(), Error> {
 
         let path_metadata = fs::metadata(&path)?;
 
-        let tmp_dir = Arc::new(
-            TempDir::new_in(&path).context("Unable to setup/create calibration test directory")?,
-        );
-
-        let size_inode_ratio = if let Some(ref calibration_path) = args.calibration_path {
-            if fs::metadata(calibration_path.as_path())?.dev() != path_metadata.dev() {
+        let size_inode_ratio = if let Some(ref user_path) = args.calibration_path {
+            if fs::metadata(user_path.as_path())?.dev() != path_metadata.dev() {
                 println!(
-                    "Warning: test directory resides on a different device than path {}",
+                    "Oops, test directory resides on a different device than path {}, results are possibly unreliable!",
                     path.display()
                 );
             }
 
             let tmp_dir = Arc::new(
-                TempDir::new_in(calibration_path.as_path())
+                TempDir::new_in(user_path.as_path())
                     .context("Unable to setup/create calibration test directory")?,
             );
 
@@ -57,7 +53,7 @@ fn main() -> Result<(), Error> {
                 .context("Unable to calibrate inode to size ratio")?
         } else {
             let tmp_dir = Arc::new(
-                TempDir::new_in(tmp_dir.path())
+                TempDir::new_in(path.as_path())
                     .context("Unable to setup/create calibration test directory")?,
             );
 
