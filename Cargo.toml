@@ -24,6 +24,7 @@ clap = { version = "3.2.22", features = ["derive"] }
 ctrlc = { version = "3.2.3", features = ["termination"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
+fs-err = "2.8.1"
 
 [profile.release]
 lto = true

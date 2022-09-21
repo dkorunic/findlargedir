@@ -1,7 +1,7 @@
-use anyhow::{Context, Error};
+use anyhow::Error;
+use fs_err as fs;
 use rm_rf::ensure_removed;
 use spinach::Spinach;
-use std::fs;
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -33,8 +33,7 @@ pub fn get_inode_ratio(
             process::exit(ERROR_EXIT);
         }
 
-        File::create(test_path.join(i.to_string()))
-            .with_context(|| format!("Unable to create calibration test file {}", i))?;
+        File::create(test_path.join(i.to_string()))?;
         if i % 1000 == 0 {
             s.text(format!("Created {} files...", i));
         }
@@ -42,9 +41,7 @@ pub fn get_inode_ratio(
 
     s.text("Done, getting total size and deleting temp folder");
 
-    let tmp_dir_size = fs::metadata(test_path)
-        .with_context(|| format!("Unable to stat {} directory", test_path.display()))?
-        .size();
+    let tmp_dir_size = fs::metadata(test_path)?.size();
 
     s.succeed("Finished with calibration.");
 
