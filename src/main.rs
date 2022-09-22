@@ -7,10 +7,12 @@ mod walk;
 use anyhow::{Context, Error, Result};
 use clap::Parser;
 use fs_err as fs;
+use humantime::Duration;
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::Instant;
 use tempfile::TempDir;
 use tikv_jemallocator::Jemalloc;
 
@@ -68,6 +70,8 @@ fn main() -> Result<(), Error> {
 
         println!("Scanning filesystem path {} started", path.display());
 
+        let start = Instant::now();
+
         walk::parallel_search(
             &path,
             path_metadata,
@@ -76,7 +80,11 @@ fn main() -> Result<(), Error> {
             &args,
         );
 
-        println!("Scanning filesystem path {} completed", path.display());
+        println!(
+            "Scanning filesystem path {} completed. Time elapsed: {}",
+            path.display(),
+            Duration::from(start.elapsed())
+        );
     }
 
     Ok(())
