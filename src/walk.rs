@@ -20,14 +20,13 @@ pub fn parallel_search(
     path: &PathBuf,
     path_metadata: Metadata,
     size_inode_ratio: u64,
-    shutdown: &Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
     args: &args::Args,
 ) {
-    let (one_filesystem, alert_threshold, blacklist_threshold, shutdown) = (
+    let (one_filesystem, alert_threshold, blacklist_threshold) = (
         args.one_filesystem,
         args.alert_threshold,
         args.blacklist_threshold,
-        shutdown.clone(),
     );
 
     for _ in WalkDir::new(path)

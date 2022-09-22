@@ -22,7 +22,6 @@ fn main() -> Result<(), Error> {
 
     // Setup SIGINT, SIGTERM and SIGHUP signal handler that will cause calibration to stop
     let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_calibrate = shutdown.clone();
     let shutdown_scan = shutdown.clone();
     interrupt::setup_interrupt_handler(shutdown)?;
 
@@ -49,7 +48,7 @@ fn main() -> Result<(), Error> {
                     .context("Unable to setup/create calibration test directory")?,
             );
 
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_calibrate, args.calibration_count)
+            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, args.calibration_count)
                 .context("Unable to calibrate inode to size ratio")?
         } else {
             let tmp_dir = Arc::new(
@@ -57,7 +56,7 @@ fn main() -> Result<(), Error> {
                     .context("Unable to setup/create calibration test directory")?,
             );
 
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_calibrate, args.calibration_count)
+            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, args.calibration_count)
                 .context("Unable to calibrate inode to size ratio")?
         };
 
@@ -67,7 +66,7 @@ fn main() -> Result<(), Error> {
             &path,
             path_metadata,
             size_inode_ratio,
-            &shutdown_scan,
+            shutdown_scan.clone(),
             &args,
         );
 

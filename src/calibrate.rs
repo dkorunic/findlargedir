@@ -1,5 +1,6 @@
-use anyhow::Error;
+use anyhow::{Context, Error};
 use fs_err as fs;
+use rayon::prelude::*;
 use rm_rf::ensure_removed;
 use spinach::Spinach;
 use std::fs::File;
@@ -24,19 +25,25 @@ pub fn get_inode_ratio(
 
     let s = Spinach::new("Starting calibration...");
 
-    for i in 0..test_count {
-        if shutdown.load(Ordering::SeqCst) {
-            s.stop();
-            println!("Requested program exit, stopping and deleting temporary files...",);
-            ensure_removed(test_path)
-                .expect("Unable to completely delete calibration directory, exiting");
-            process::exit(ERROR_EXIT);
-        }
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_cpus::get())
+        .build()
+        .context("Unable to spawn calibration thread pool")?;
 
-        File::create(test_path.join(i.to_string()))?;
-        if i % 1000 == 0 {
-            s.text(format!("Created {} files...", i));
-        }
+    pool.install(|| {
+        (0..test_count).into_par_iter().for_each(|i| {
+            if !shutdown.load(Ordering::SeqCst) {
+                File::create(test_path.join(i.to_string())).expect("Unable to create files");
+            }
+        });
+    });
+
+    if shutdown.load(Ordering::SeqCst) {
+        s.stop();
+        println!("Requested program exit, stopping and deleting temporary files...",);
+        ensure_removed(test_path)
+            .expect("Unable to completely delete calibration directory, exiting");
+        process::exit(ERROR_EXIT);
     }
 
     s.text("Done, getting total size and deleting temp folder");
