@@ -25,6 +25,7 @@ fn main() -> Result<(), Error> {
     let shutdown_scan = shutdown.clone();
     interrupt::setup_interrupt_handler(shutdown)?;
 
+    // Search only unique paths
     let mut visited_paths = HashSet::new();
 
     for path in args.path.clone() {
@@ -33,9 +34,12 @@ fn main() -> Result<(), Error> {
             _ => continue,
         };
 
+        // Retrieve Unix metadata for top search path
         let path_metadata = fs::metadata(&path)?;
 
         let size_inode_ratio = if let Some(ref user_path) = args.calibration_path {
+            // User has specified his calibration directory so attempt to check if it resides on
+            // the same device
             if fs::metadata(user_path.as_path())?.dev() != path_metadata.dev() {
                 println!(
                     "Oops, test directory resides on a different device than path {}, results are possibly unreliable!",
@@ -43,6 +47,7 @@ fn main() -> Result<(), Error> {
                 );
             }
 
+            // Prepare temporary calibration directory in user path
             let tmp_dir = Arc::new(
                 TempDir::new_in(user_path.as_path())
                     .context("Unable to setup/create calibration test directory")?,
@@ -51,6 +56,7 @@ fn main() -> Result<(), Error> {
             calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, args.calibration_count)
                 .context("Unable to calibrate inode to size ratio")?
         } else {
+            // Prepare temporary calibration directory in root of the search path
             let tmp_dir = Arc::new(
                 TempDir::new_in(path.as_path())
                     .context("Unable to setup/create calibration test directory")?,

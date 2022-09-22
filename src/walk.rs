@@ -12,10 +12,18 @@ use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+/// Default number of files in a folder to cause alert
 pub const ALERT_COUNT: u64 = 10_000;
+
+/// Default number of files in a folder to cause red alert and further blacklist from the deeper
+/// scan
 pub const BLACKLIST_COUNT: u64 = 100_000;
+
+/// Default exit error code in case of premature termination
 const ERROR_EXIT: i32 = 1;
 
+/// Scans a given path and calls `process_dir_entry()` for each entry. In case `shutdown` has
+/// been set by interrupt signal handler, process will exit with `ERROR_EXIT` code.
 pub fn parallel_search(
     path: &PathBuf,
     path_metadata: Metadata,
@@ -34,6 +42,7 @@ pub fn parallel_search(
         .sort(false)
         .parallelism(Parallelism::RayonNewPool(num_cpus::get()))
         .process_read_dir(move |_, _, _, children| {
+            // Terminate on received interrupt signal
             if shutdown.load(Ordering::SeqCst) {
                 println!("Requested program exit, stopping scan...");
                 process::exit(ERROR_EXIT);
@@ -53,6 +62,10 @@ pub fn parallel_search(
     {}
 }
 
+/// Processes each directory entry and in case of a directory inode, determines directory inode
+/// size and possible directory entry count. If count exceeds `blacklist_threshold`, it will
+/// give out fatal warning and abort deeper scanning, and in case of count being just above
+/// `alert_threshold` but below `blacklist_threshold` it will print just an informative warning.
 fn process_dir_entry<E>(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
@@ -64,7 +77,11 @@ fn process_dir_entry<E>(
     if let Ok(dir_entry) = dir_entry_result {
         if dir_entry.file_type.is_dir() {
             if let Some(full_path) = dir_entry.read_children_path.as_ref() {
+                // Retrieve Unix metadata for a given directory
                 if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
+                    // If `one_filesystem` flag has been set and if directory is not residing
+                    // on the same device as top search path, print warning and abort deeper
+                    // scanning
                     if one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev()) {
                         println!(
                             "Identified filesystem boundary at {}, skipping...",
@@ -75,9 +92,11 @@ fn process_dir_entry<E>(
                         return;
                     }
 
+                    // Identify size and calculate approximate directory entry count
                     let size = dir_entry_metadata.size();
                     let approx_files = size / size_inode_ratio;
 
+                    // Print count warnings if necessary
                     if approx_files > blacklist_threshold {
                         print_offender(full_path, size, approx_files, true);
                         dir_entry.read_children_path = None;
@@ -91,6 +110,8 @@ fn process_dir_entry<E>(
 }
 
 #[allow(clippy::cast_precision_loss)]
+/// Print directory information with inode size from metadata and approximate directory entry
+/// count.
 fn print_offender(full_path: &Arc<Path>, size: u64, approx_files: u64, red_alert: bool) {
     let human_files = Formatter::new().format(approx_files as f64);
     println!(
