@@ -46,6 +46,9 @@ OPTIONS:
     -o, --one-filesystem <ONE_FILESYSTEM>
             [default: true] [possible values: true, false]
 
+    -s, --skip-path <SKIP_PATH>
+
+
     -t, --calibration-path <CALIBRATION_PATH>
 
 

@@ -4,6 +4,7 @@ use fs_err as fs;
 use human_bytes::human_bytes;
 use human_format::Formatter;
 use jwalk::{DirEntry, Parallelism, WalkDir};
+use std::collections::HashSet;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -36,6 +37,7 @@ pub fn parallel_search(
         args.alert_threshold,
         args.blacklist_threshold,
     );
+    let skip_path = args.skip_path.iter().cloned().collect::<HashSet<_>>();
 
     for _ in WalkDir::new(path)
         .skip_hidden(false)
@@ -53,6 +55,7 @@ pub fn parallel_search(
                     &path_metadata,
                     size_inode_ratio,
                     dir_entry_result,
+                    &skip_path,
                     one_filesystem,
                     alert_threshold,
                     blacklist_threshold,
@@ -70,6 +73,7 @@ fn process_dir_entry<E>(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
     dir_entry_result: &mut Result<DirEntry<((), ())>, E>,
+    skip_path: &HashSet<PathBuf>,
     one_filesystem: bool,
     alert_threshold: u64,
     blacklist_threshold: u64,
@@ -77,6 +81,17 @@ fn process_dir_entry<E>(
     if let Ok(dir_entry) = dir_entry_result {
         if dir_entry.file_type.is_dir() {
             if let Some(full_path) = dir_entry.read_children_path.as_ref() {
+                // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
+                if !skip_path.is_empty() && skip_path.contains(&full_path.to_path_buf()) {
+                    println!(
+                        "Skipping further scan at {} as requested",
+                        full_path.display()
+                    );
+
+                    dir_entry.read_children_path = None;
+                    return;
+                }
+
                 // Retrieve Unix metadata for a given directory
                 if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
                     // If `one_filesystem` flag has been set and if directory is not residing
