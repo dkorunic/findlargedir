@@ -29,3 +29,4 @@ fs-err = "2.8.1"
 
 [profile.release]
 lto = true
+strip = true
