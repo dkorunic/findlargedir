@@ -30,7 +30,7 @@ pub fn get_inode_ratio(
         test_path.display(),
     );
 
-    let s = Spinach::new("Starting calibration...");
+    let s = Spinach::new("Running calibration...");
 
     // Build Rayon thread pool for mass file creation
     let pool = rayon::ThreadPoolBuilder::new()
@@ -56,8 +56,7 @@ pub fn get_inode_ratio(
         process::exit(ERROR_EXIT);
     }
 
-    s.text("Done, getting total size and deleting temp folder");
-    s.succeed("Finished with calibration.");
+    s.succeed("Finished calibration.");
 
     let size_inode_ratio = fs::metadata(test_path)?.size() / test_count;
     println!("Calculated size-to-inode ratio: {}", size_inode_ratio);
