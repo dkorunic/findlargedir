@@ -10,7 +10,7 @@ Findlargedir is a quick hack intended to help identifying "black hole" directori
 
 Program will **not follow symlinks** and **requires r/w permissions** to calibrate directory to be able to calculate a directory inode size to number of entries ratio and estimate a number of entries in a directory without actually counting them. While this method is just an approximation of the actual number of entries in a directory, it is good enough to quickly scan for offending directories.
 
-[![asciicast](https://asciinema.org/a/boGSGyxVZ8oY2K0XqhYcdWNGl.svg)](https://asciinema.org/a/boGSGyxVZ8oY2K0XqhYcdWNGl)
+[![asciicast](https://asciinema.org/a/524314.svg)](https://asciinema.org/a/524314)
 
 ## Caveats
 
@@ -25,35 +25,42 @@ USAGE:
     findlargedir [OPTIONS] <PATH>...
 
 ARGS:
-    <PATH>...
+    <PATH>...    Paths to check for large directories
 
 OPTIONS:
     -a, --accurate <ACCURATE>
-            [default: false] [possible values: true, false]
+            Perform accurate directory entry counting (WIP) [default: false] [possible values: true,
+            false]
 
     -A, --alert-threshold <ALERT_THRESHOLD>
-            [default: 10000]
+            Alert threshold count (print the estimate) [default: 10000]
 
     -B, --blacklist-threshold <BLACKLIST_THRESHOLD>
-            [default: 100000]
+            Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
 
     -c, --calibration-count <CALIBRATION_COUNT>
-            [default: 100000]
+            Calibration directory file count [default: 100000]
 
     -h, --help
             Print help information
 
     -o, --one-filesystem <ONE_FILESYSTEM>
-            [default: true] [possible values: true, false]
+            Do not cross mount points [default: true] [possible values: true, false]
+
+    -p, --updates <UPDATES>
+            Seconds between status updates, set to 0 to disable [default: 30]
 
     -s, --skip-path <SKIP_PATH>
-
+            Directories to exclude from scanning
 
     -t, --calibration-path <CALIBRATION_PATH>
-
+            Custom calibration directory path
 
     -V, --version
             Print version information
+
+    -x, --threads <THREADS>
+            Number of threads to use when calibrating and scanning [default: 24]
 ```
 
 (Note: This is still not merged) When using **accurate mode** (`-a` parameter) beware that large directory lookups will stall the process completely for extended periods of time. What this mode does is basically a secondary fully accurate pass on a possibly offending directory calculating exact number of entries.
