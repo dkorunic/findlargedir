@@ -55,7 +55,7 @@ fn main() -> Result<(), Error> {
                     .context("Unable to setup/create calibration test directory")?,
             );
 
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, args.calibration_count)
+            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, &args)
                 .context("Unable to calibrate inode to size ratio")?
         } else {
             // Prepare temporary calibration directory in root of the search path
@@ -64,7 +64,7 @@ fn main() -> Result<(), Error> {
                     .context("Unable to setup/create calibration test directory")?,
             );
 
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, args.calibration_count)
+            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, &args)
                 .context("Unable to calibrate inode to size ratio")?
         };
 
@@ -78,7 +78,7 @@ fn main() -> Result<(), Error> {
             size_inode_ratio,
             shutdown_scan.clone(),
             &args,
-        );
+        )?;
 
         println!(
             "Scanning filesystem path {} completed. Time elapsed: {}",

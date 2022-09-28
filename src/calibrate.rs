@@ -1,3 +1,4 @@
+use crate::args;
 use anyhow::{Context, Error};
 use fs_err as fs;
 use rayon::prelude::*;
@@ -23,24 +24,24 @@ const ERROR_EXIT: i32 = 1;
 pub fn get_inode_ratio(
     test_path: &Path,
     shutdown: &Arc<AtomicBool>,
-    test_count: u64,
+    args: &args::Args,
 ) -> Result<u64, Error> {
     println!(
-        "Running test directory calibration in: {}",
+        "Running test directory calibration in {}",
         test_path.display(),
     );
 
     let s = Spinach::new("Running calibration...");
 
-    // Build Rayon thread pool for mass file creation
+    // Thread pool for mass file creation
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_cpus::get())
+        .num_threads(args.threads)
         .build()
         .context("Unable to spawn calibration thread pool")?;
 
     // Mass create files; filenames are short to get minimal size to inode ratio
     pool.install(|| {
-        (0..test_count).into_par_iter().for_each(|i| {
+        (0..args.calibration_count).into_par_iter().for_each(|i| {
             if !shutdown.load(Ordering::SeqCst) {
                 File::create(test_path.join(i.to_string())).expect("Unable to create files");
             }
@@ -58,7 +59,7 @@ pub fn get_inode_ratio(
 
     s.succeed("Finished calibration.");
 
-    let size_inode_ratio = fs::metadata(test_path)?.size() / test_count;
+    let size_inode_ratio = fs::metadata(test_path)?.size() / args.calibration_count;
     println!("Calculated size-to-inode ratio: {}", size_inode_ratio);
 
     Ok(size_inode_ratio)

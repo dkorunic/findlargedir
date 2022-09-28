@@ -1,5 +1,6 @@
 use crate::args;
-use ansi_term::Colour::{Red, Yellow};
+use ansi_term::Colour::{Green, Red, Yellow};
+use anyhow::{Context, Error};
 use fs_err as fs;
 use human_bytes::human_bytes;
 use human_format::Formatter;
@@ -10,8 +11,10 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::thread::sleep;
+use std::time::Duration;
 
 /// Default number of files in a folder to cause alert
 pub const ALERT_COUNT: u64 = 10_000;
@@ -23,6 +26,9 @@ pub const BLACKLIST_COUNT: u64 = 100_000;
 /// Default exit error code in case of premature termination
 const ERROR_EXIT: i32 = 1;
 
+/// Default status update period in seconds
+pub const STATUS_SECONDS: u64 = 30;
+
 /// Scans a given path and calls `process_dir_entry()` for each entry. In case `shutdown` has
 /// been set by interrupt signal handler, process will exit with `ERROR_EXIT` code.
 pub fn parallel_search(
@@ -31,7 +37,7 @@ pub fn parallel_search(
     size_inode_ratio: u64,
     shutdown: Arc<AtomicBool>,
     args: &args::Args,
-) {
+) -> Result<(), Error> {
     let (one_filesystem, alert_threshold, blacklist_threshold) = (
         args.one_filesystem,
         args.alert_threshold,
@@ -39,10 +45,39 @@ pub fn parallel_search(
     );
     let skip_path = args.skip_path.iter().cloned().collect::<HashSet<_>>();
 
+    // Thread pool for status reporting and filesystem walk
+    let pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(args.threads)
+            .build()
+            .context("Unable to spawn calibration thread pool")?,
+    );
+
+    // Processed directory count
+    let dir_count = Arc::new(AtomicU64::new(0));
+
+    // Status update thread
+    if args.updates > 0 {
+        let dir_count_status = dir_count.clone();
+        let sleep_delay = args.updates;
+
+        pool.spawn(move || loop {
+            sleep(Duration::from_secs(sleep_delay));
+
+            let count = dir_count_status.load(Ordering::SeqCst);
+            println!(
+                "Still scanning... Processed {} directories so far, next update in {} seconds",
+                Green.paint(count.to_string()),
+                sleep_delay
+            );
+        });
+    }
+
+    // Perform target filesystem walking
     for _ in WalkDir::new(path)
         .skip_hidden(false)
         .sort(false)
-        .parallelism(Parallelism::RayonNewPool(num_cpus::get()))
+        .parallelism(Parallelism::RayonExistingPool(pool))
         .process_read_dir(move |_, _, _, children| {
             // Terminate on received interrupt signal
             if shutdown.load(Ordering::SeqCst) {
@@ -59,12 +94,16 @@ pub fn parallel_search(
                     one_filesystem,
                     alert_threshold,
                     blacklist_threshold,
+                    &dir_count,
                 );
             }
         })
     {}
+
+    Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Processes each directory entry and in case of a directory inode, determines directory inode
 /// size and possible directory entry count. If count exceeds `blacklist_threshold`, it will
 /// give out fatal warning and abort deeper scanning, and in case of count being just above
@@ -77,10 +116,14 @@ fn process_dir_entry<E>(
     one_filesystem: bool,
     alert_threshold: u64,
     blacklist_threshold: u64,
+    dir_count_walk: &Arc<AtomicU64>,
 ) {
     if let Ok(dir_entry) = dir_entry_result {
         if dir_entry.file_type.is_dir() {
             if let Some(full_path) = dir_entry.read_children_path.as_ref() {
+                // Visited directory count
+                dir_count_walk.fetch_add(1, Ordering::SeqCst);
+
                 // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
                 if !skip_path.is_empty() && skip_path.contains(&full_path.to_path_buf()) {
                     println!(
