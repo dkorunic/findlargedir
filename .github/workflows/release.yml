@@ -46,7 +46,7 @@ jobs:
           - build: linux-arm
             os: ubuntu-latest
             rust: stable
-            target: arm-unknown-linux-musleabihf
+            target: armv7-unknown-linux-musleabihf
           - build: linux-arm64
             os: ubuntu-latest
             rust: stable
