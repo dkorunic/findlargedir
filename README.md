@@ -29,7 +29,7 @@ ARGS:
 
 OPTIONS:
     -a, --accurate <ACCURATE>
-            Perform accurate directory entry counting (WIP) [default: false] [possible values: true,
+            Perform accurate directory entry counting [default: false] [possible values: true,
             false]
 
     -A, --alert-threshold <ALERT_THRESHOLD>
@@ -63,7 +63,7 @@ OPTIONS:
             Number of threads to use when calibrating and scanning [default: 24]
 ```
 
-(Note: This is still not merged) When using **accurate mode** (`-a` parameter) beware that large directory lookups will stall the process completely for extended periods of time. What this mode does is basically a secondary fully accurate pass on a possibly offending directory calculating exact number of entries.
+When using **accurate mode** (`-a` parameter) beware that large directory lookups will stall the process completely for extended periods of time. What this mode does is basically a secondary fully accurate pass on a possibly offending directory calculating exact number of entries.
 
-If you want to avoid descending into mounted filesystems (as in find -xdev option), use **one-filesystem mode** with `-o` parameter and this toggled by default.
+To avoid descending into mounted filesystems (as in find -xdev option), parameter **one-filesystem mode** is toggled by default, but it can be disabled if necessary.
 

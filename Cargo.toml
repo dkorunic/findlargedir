@@ -1,6 +1,6 @@
 [package]
 name = "findlargedir"
-version = "0.1.6"
+version = "0.1.8"
 authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "find all blackhole directories with a huge amount of filesystem entries in a flat structure"

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Parser, Default, Debug)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
-    /// Perform accurate directory entry counting (WIP)
+    /// Perform accurate directory entry counting
     #[clap(short = 'a', long, action = clap::ArgAction::Set, default_value_t = false)]
     pub accurate: bool,
 
@@ -26,7 +26,7 @@ pub struct Args {
     pub blacklist_threshold: u64,
 
     /// Number of threads to use when calibrating and scanning
-    #[clap(short = 'x', long, value_parser, default_value_t = num_cpus::get())]
+    #[clap(short = 'x', long, value_parser = clap::value_parser!(u32).range(1..65535), default_value_t = num_cpus::get())]
     pub threads: usize,
 
     /// Seconds between status updates, set to 0 to disable

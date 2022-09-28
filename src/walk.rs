@@ -6,6 +6,7 @@ use human_bytes::human_bytes;
 use human_format::Formatter;
 use jwalk::{DirEntry, Parallelism, WalkDir};
 use std::collections::HashSet;
+use std::fs::read_dir;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -38,7 +39,8 @@ pub fn parallel_search(
     shutdown: Arc<AtomicBool>,
     args: &args::Args,
 ) -> Result<(), Error> {
-    let (one_filesystem, alert_threshold, blacklist_threshold) = (
+    let (accurate, one_filesystem, alert_threshold, blacklist_threshold) = (
+        args.accurate,
         args.one_filesystem,
         args.alert_threshold,
         args.blacklist_threshold,
@@ -91,6 +93,7 @@ pub fn parallel_search(
                     size_inode_ratio,
                     dir_entry_result,
                     &skip_path,
+                    accurate,
                     one_filesystem,
                     alert_threshold,
                     blacklist_threshold,
@@ -113,6 +116,7 @@ fn process_dir_entry<E>(
     size_inode_ratio: u64,
     dir_entry_result: &mut Result<DirEntry<((), ())>, E>,
     skip_path: &HashSet<PathBuf>,
+    accurate: bool,
     one_filesystem: bool,
     alert_threshold: u64,
     blacklist_threshold: u64,
@@ -156,10 +160,10 @@ fn process_dir_entry<E>(
 
                     // Print count warnings if necessary
                     if approx_files > blacklist_threshold {
-                        print_offender(full_path, size, approx_files, true);
+                        print_offender(full_path, size, approx_files, accurate, true);
                         dir_entry.read_children_path = None;
                     } else if approx_files > alert_threshold {
-                        print_offender(full_path, size, approx_files, false);
+                        print_offender(full_path, size, approx_files, accurate, false);
                     }
                 }
             }
@@ -170,12 +174,29 @@ fn process_dir_entry<E>(
 #[allow(clippy::cast_precision_loss)]
 /// Print directory information with inode size from metadata and approximate directory entry
 /// count.
-fn print_offender(full_path: &Arc<Path>, size: u64, approx_files: u64, red_alert: bool) {
-    let human_files = Formatter::new().format(approx_files as f64);
+fn print_offender(
+    full_path: &Arc<Path>,
+    size: u64,
+    approx_files: u64,
+    accurate: bool,
+    red_alert: bool,
+) {
+    // Pretty print either the accurate directory count or the approximation
+    let human_files = if accurate {
+        let exact_files = match read_dir(full_path) {
+            Ok(r) => r.count() as u64,
+            Err(_) => approx_files,
+        };
+        Formatter::new().format(exact_files as f64)
+    } else {
+        Formatter::new().format(approx_files as f64)
+    };
+
     println!(
-        "Found directory {} with inode size {}, approx {} files",
+        "Found directory {} with inode size {} and {}{} files",
         full_path.display(),
         human_bytes(size as f64),
+        if accurate { "" } else { "approx " },
         if red_alert {
             Red.paint(human_files)
         } else {
