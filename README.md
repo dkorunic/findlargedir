@@ -10,7 +10,7 @@ Findlargedir is a quick hack intended to help identifying "black hole" directori
 
 Program will **not follow symlinks** and **requires r/w permissions** to calibrate directory to be able to calculate a directory inode size to number of entries ratio and estimate a number of entries in a directory without actually counting them. While this method is just an approximation of the actual number of entries in a directory, it is good enough to quickly scan for offending directories.
 
-[![asciicast](https://asciinema.org/a/524314.svg)](https://asciinema.org/a/524314)
+![Demo](demo.gif)
 
 ## Caveats
 
