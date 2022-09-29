@@ -33,6 +33,10 @@ pub struct Args {
     #[clap(short = 'p', long, value_parser, default_value_t = crate::walk::STATUS_SECONDS)]
     pub updates: u64,
 
+    /// Skip calibration and provide directory entry to inode size ratio (typically ~21-32)
+    #[clap(short = 'i', long, value_parser, default_value_t = 0u64)]
+    pub size_inode_ratio: u64,
+
     /// Custom calibration directory path
     #[clap(short = 't', long, value_parser, value_hint = ValueHint::AnyPath)]
     pub calibration_path: Option<PathBuf>,

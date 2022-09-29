@@ -39,7 +39,13 @@ fn main() -> Result<(), Error> {
         // Retrieve Unix metadata for top search path
         let path_metadata = fs::metadata(&path)?;
 
-        let size_inode_ratio = if let Some(ref user_path) = args.calibration_path {
+        // Directory inode size to number of entries ratio is either manually provided in
+        // `args.size_inode_ratio` or determined from manually provided calibration path
+        // `args.calibration_path` or determined from calibration directory created in search root
+        // `TempDir::new_in(path.as_path())`
+        let size_inode_ratio = if args.size_inode_ratio > 0 {
+            args.size_inode_ratio
+        } else if let Some(ref user_path) = args.calibration_path {
             // User has specified his calibration directory so attempt to check if it resides on
             // the same device
             if fs::metadata(user_path.as_path())?.dev() != path_metadata.dev() {
