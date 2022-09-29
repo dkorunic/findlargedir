@@ -17,53 +17,45 @@ Program will **not follow symlinks** and **requires r/w permissions** to calibra
 - requires r/w privileges for an each filesystem being tested, it will also create a temporary directory with a lot of temporary files which are cleaned up afterwards
 - accurate mode (`-a`) can cause an excessive I/O and an excessive memory use; only use when appropriate
 
-
 ## Usage
 
 ```shell
-USAGE:
-    findlargedir [OPTIONS] <PATH>...
+Usage: findlargedir [OPTIONS] <PATH>...
 
-ARGS:
-    <PATH>...    Paths to check for large directories
+Arguments:
+  <PATH>...  Paths to check for large directories
 
-OPTIONS:
-    -a, --accurate <ACCURATE>
-            Perform accurate directory entry counting [default: false] [possible values: true,
-            false]
-
-    -A, --alert-threshold <ALERT_THRESHOLD>
-            Alert threshold count (print the estimate) [default: 10000]
-
-    -B, --blacklist-threshold <BLACKLIST_THRESHOLD>
-            Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
-
-    -c, --calibration-count <CALIBRATION_COUNT>
-            Calibration directory file count [default: 100000]
-
-    -h, --help
-            Print help information
-
-    -o, --one-filesystem <ONE_FILESYSTEM>
-            Do not cross mount points [default: true] [possible values: true, false]
-
-    -p, --updates <UPDATES>
-            Seconds between status updates, set to 0 to disable [default: 30]
-
-    -s, --skip-path <SKIP_PATH>
-            Directories to exclude from scanning
-
-    -t, --calibration-path <CALIBRATION_PATH>
-            Custom calibration directory path
-
-    -V, --version
-            Print version information
-
-    -x, --threads <THREADS>
-            Number of threads to use when calibrating and scanning [default: 24]
+Options:
+  -a, --accurate <ACCURATE>
+          Perform accurate directory entry counting [default: false] [possible values: true, false]
+  -o, --one-filesystem <ONE_FILESYSTEM>
+          Do not cross mount points [default: true] [possible values: true, false]
+  -c, --calibration-count <CALIBRATION_COUNT>
+          Calibration directory file count [default: 100000]
+  -A, --alert-threshold <ALERT_THRESHOLD>
+          Alert threshold count (print the estimate) [default: 10000]
+  -B, --blacklist-threshold <BLACKLIST_THRESHOLD>
+          Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
+  -x, --threads <THREADS>
+          Number of threads to use when calibrating and scanning [default: 24]
+  -p, --updates <UPDATES>
+          Seconds between status updates, set to 0 to disable [default: 60]
+  -i, --size-inode-ratio <SIZE_INODE_RATIO>
+          Skip calibration and provide directory entry to inode size ratio (typically ~21-32) [default: 0]
+  -t, --calibration-path <CALIBRATION_PATH>
+          Custom calibration directory path
+  -s, --skip-path <SKIP_PATH>
+          Directories to exclude from scanning
+  -h, --help
+          Print help information
+  -V, --version
+          Print version information
 ```
 
 When using **accurate mode** (`-a` parameter) beware that large directory lookups will stall the process completely for extended periods of time. What this mode does is basically a secondary fully accurate pass on a possibly offending directory calculating exact number of entries.
 
-To avoid descending into mounted filesystems (as in find -xdev option), parameter **one-filesystem mode** is toggled by default, but it can be disabled if necessary.
+To avoid descending into mounted filesystems (as in find -xdev option), parameter **one-filesystem mode** (`-o` parameter) is toggled by default, but it can be disabled if necessary.
 
+It is possible to completely skip calibration phase by manually providing directory inode size to number of entries ratio with `-i` parameter. It makes sense only when you already know the ratio, for example from previous runs.
+
+Setting `-p` paramter to 0 will stop program from giving occasional status updates.
