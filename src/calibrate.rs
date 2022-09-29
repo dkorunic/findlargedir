@@ -1,9 +1,9 @@
 use crate::args;
 use anyhow::{Context, Error};
 use fs_err as fs;
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rm_rf::ensure_removed;
-use spinach::Spinach;
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -27,11 +27,9 @@ pub fn get_inode_ratio(
     args: &args::Args,
 ) -> Result<u64, Error> {
     println!(
-        "Running test directory calibration in {}",
+        "Starting test directory calibration in {}",
         test_path.display(),
     );
-
-    let s = Spinach::new("Running calibration...");
 
     // Thread pool for mass file creation
     let pool = rayon::ThreadPoolBuilder::new()
@@ -39,28 +37,34 @@ pub fn get_inode_ratio(
         .build()
         .context("Unable to spawn calibration thread pool")?;
 
+    let pb = ProgressBar::new(args.calibration_count);
+    pb.set_style(ProgressStyle::with_template("{spinner} Files created: {pos}/{len}").unwrap());
+
     // Mass create files; filenames are short to get minimal size to inode ratio
     pool.install(|| {
-        (0..args.calibration_count).into_par_iter().for_each(|i| {
-            if !shutdown.load(Ordering::SeqCst) {
-                File::create(test_path.join(i.to_string())).expect("Unable to create files");
-            }
-        });
+        (0..args.calibration_count)
+            .into_par_iter()
+            .progress_with(pb)
+            .for_each(|i| {
+                if !shutdown.load(Ordering::SeqCst) {
+                    File::create(test_path.join(i.to_string())).expect("Unable to create files");
+                }
+            });
     });
 
     // Terminate on received interrupt signal
     if shutdown.load(Ordering::SeqCst) {
-        s.stop();
         println!("Requested program exit, stopping and deleting temporary files...",);
         ensure_removed(test_path)
             .expect("Unable to completely delete calibration directory, exiting");
         process::exit(ERROR_EXIT);
     }
 
-    s.succeed("Finished calibration.");
-
     let size_inode_ratio = fs::metadata(test_path)?.size() / args.calibration_count;
-    println!("Calculated size-to-inode ratio: {}", size_inode_ratio);
+    println!(
+        "Calibration done. Calculated size-to-inode ratio: {}",
+        size_inode_ratio
+    );
 
     Ok(size_inode_ratio)
 }
