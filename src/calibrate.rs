@@ -24,7 +24,7 @@ const ERROR_EXIT: i32 = 1;
 pub fn get_inode_ratio(
     test_path: &Path,
     shutdown: &Arc<AtomicBool>,
-    args: &args::Args,
+    args: &Arc<args::Args>,
 ) -> Result<u64, Error> {
     println!(
         "Starting test directory calibration in {}",

@@ -2,7 +2,7 @@ use clap::Parser;
 use clap::ValueHint;
 use std::path::PathBuf;
 
-#[derive(Parser, Default, Debug)]
+#[derive(Parser, Default, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
 pub struct Args {
     /// Perform accurate directory entry counting

@@ -38,14 +38,9 @@ pub fn parallel_search(
     path_metadata: Metadata,
     size_inode_ratio: u64,
     shutdown: Arc<AtomicBool>,
-    args: &args::Args,
+    args: Arc<args::Args>,
 ) -> Result<(), Error> {
-    let (accurate, one_filesystem, alert_threshold, blacklist_threshold) = (
-        args.accurate,
-        args.one_filesystem,
-        args.alert_threshold,
-        args.blacklist_threshold,
-    );
+    // Create hash set for path exclusions
     let skip_path = args.skip_path.iter().cloned().collect::<HashSet<_>>();
 
     // Thread pool for status reporting and filesystem walk
@@ -101,10 +96,7 @@ pub fn parallel_search(
                     size_inode_ratio,
                     dir_entry_result,
                     &skip_path,
-                    accurate,
-                    one_filesystem,
-                    alert_threshold,
-                    blacklist_threshold,
+                    &args,
                     &dir_count,
                     &pb,
                 );
@@ -115,7 +107,6 @@ pub fn parallel_search(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Processes each directory entry and in case of a directory inode, determines directory inode
 /// size and possible directory entry count. If count exceeds `blacklist_threshold`, it will
 /// give out fatal warning and abort deeper scanning, and in case of count being just above
@@ -125,10 +116,7 @@ fn process_dir_entry<E>(
     size_inode_ratio: u64,
     dir_entry_result: &mut Result<DirEntry<((), ())>, E>,
     skip_path: &HashSet<PathBuf>,
-    accurate: bool,
-    one_filesystem: bool,
-    alert_threshold: u64,
-    blacklist_threshold: u64,
+    args: &Arc<args::Args>,
     dir_count_walk: &Arc<AtomicU64>,
     pb: &ProgressBar,
 ) {
@@ -156,7 +144,7 @@ fn process_dir_entry<E>(
                     // If `one_filesystem` flag has been set and if directory is not residing
                     // on the same device as top search path, print warning and abort deeper
                     // scanning
-                    if one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev()) {
+                    if args.one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev()) {
                         pb.println(format!(
                             "Identified filesystem boundary at {}, skipping...",
                             full_path.display()
@@ -171,11 +159,11 @@ fn process_dir_entry<E>(
                     let approx_files = size / size_inode_ratio;
 
                     // Print count warnings if necessary
-                    if approx_files > blacklist_threshold {
-                        print_offender(full_path, size, approx_files, accurate, true, pb);
+                    if approx_files > args.blacklist_threshold {
+                        print_offender(full_path, size, approx_files, args.accurate, true, pb);
                         dir_entry.read_children_path = None;
-                    } else if approx_files > alert_threshold {
-                        print_offender(full_path, size, approx_files, accurate, false, pb);
+                    } else if approx_files > args.alert_threshold {
+                        print_offender(full_path, size, approx_files, args.accurate, false, pb);
                     }
                 }
             }

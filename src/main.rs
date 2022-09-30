@@ -20,7 +20,7 @@ use tikv_jemallocator::Jemalloc;
 static GLOBAL: Jemalloc = Jemalloc;
 
 fn main() -> Result<(), Error> {
-    let args = args::Args::parse();
+    let args = Arc::new(args::Args::parse());
 
     // Setup SIGINT, SIGTERM and SIGHUP signal handler that will cause calibration to stop
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -28,9 +28,10 @@ fn main() -> Result<(), Error> {
     interrupt::setup_interrupt_handler(shutdown)?;
 
     // Search only unique paths
-    let mut visited_paths = HashSet::new();
+    let mut visited_paths = HashSet::with_capacity(args.path.len());
 
     for path in args.path.clone() {
+        // Keep order of provided path arguments, but skip already visited paths
         match visited_paths.get(&path) {
             None => visited_paths.insert(path.clone()),
             _ => continue,
@@ -83,7 +84,7 @@ fn main() -> Result<(), Error> {
             path_metadata,
             size_inode_ratio,
             shutdown_scan.clone(),
-            &args,
+            args.clone(),
         )?;
 
         println!(
