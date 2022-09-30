@@ -1,3 +1,5 @@
+use anyhow::{anyhow, Error};
+use clap::builder::ValueParser;
 use clap::Parser;
 use clap::ValueHint;
 use std::path::PathBuf;
@@ -26,7 +28,7 @@ pub struct Args {
     pub blacklist_threshold: u64,
 
     /// Number of threads to use when calibrating and scanning
-    #[clap(short = 'x', long, value_parser, default_value_t = num_cpus::get())]
+    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = num_cpus::get())]
     pub threads: usize,
 
     /// Seconds between status updates, set to 0 to disable
@@ -48,4 +50,14 @@ pub struct Args {
     /// Paths to check for large directories
     #[clap(required = true, value_parser, value_hint = ValueHint::AnyPath)]
     pub path: Vec<PathBuf>,
+}
+
+fn parse_threads(x: &str) -> Result<usize, Error> {
+    match x.parse::<usize>() {
+        Ok(v) => match v {
+            v if !(2..=65535).contains(&v) => Err(anyhow!("threads should be in (2..65536) range")),
+            v => Ok(v),
+        },
+        Err(e) => Err(Error::from(e)),
+    }
 }
