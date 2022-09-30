@@ -52,6 +52,7 @@ pub struct Args {
     pub path: Vec<PathBuf>,
 }
 
+/// Parse and validate threads option
 fn parse_threads(x: &str) -> Result<usize, Error> {
     match x.parse::<usize>() {
         Ok(v) => match v {
