@@ -1,10 +1,10 @@
 use crate::args;
+
 use ansi_term::Colour::{Green, Red, Yellow};
 use anyhow::{Context, Error};
 use fs_err as fs;
 use human_bytes::human_bytes;
 use human_format::Formatter;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use jwalk::{DirEntry, Parallelism, WalkDir};
 use std::collections::HashSet;
 use std::fs::read_dir;
@@ -29,7 +29,7 @@ pub const BLACKLIST_COUNT: u64 = 100_000;
 const ERROR_EXIT: i32 = 1;
 
 /// Default status update period in seconds
-pub const STATUS_SECONDS: u64 = 60;
+pub const STATUS_SECONDS: u64 = 20;
 
 /// Scans a given path and calls `process_dir_entry()` for each entry. In case `shutdown` has
 /// been set by interrupt signal handler, process will exit with `ERROR_EXIT` code.
@@ -71,10 +71,6 @@ pub fn parallel_search(
         });
     }
 
-    // ProgressBar setup for walk workers
-    let m = MultiProgress::new();
-    let spinner_style = ProgressStyle::with_template("- {wide_msg}").unwrap();
-
     // Perform target filesystem walking
     for _ in WalkDir::new(path)
         .skip_hidden(false)
@@ -87,9 +83,6 @@ pub fn parallel_search(
                 process::exit(ERROR_EXIT);
             }
 
-            let pb = m.add(ProgressBar::new(0));
-            pb.set_style(spinner_style.clone());
-
             for dir_entry_result in children.iter_mut() {
                 process_dir_entry(
                     &path_metadata,
@@ -98,7 +91,6 @@ pub fn parallel_search(
                     &skip_path,
                     &args,
                     &dir_count,
-                    &pb,
                 );
             }
         })
@@ -118,22 +110,19 @@ fn process_dir_entry<E>(
     skip_path: &HashSet<PathBuf>,
     args: &Arc<args::Args>,
     dir_count_walk: &Arc<AtomicU64>,
-    pb: &ProgressBar,
 ) {
     if let Ok(dir_entry) = dir_entry_result {
         if dir_entry.file_type.is_dir() {
             if let Some(full_path) = dir_entry.read_children_path.as_ref() {
-                pb.set_message(format!("Scanning: {}", full_path.display()));
-
                 // Visited directory count
                 dir_count_walk.fetch_add(1, Ordering::SeqCst);
 
                 // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
                 if !skip_path.is_empty() && skip_path.contains(&full_path.to_path_buf()) {
-                    pb.println(format!(
+                    println!(
                         "Skipping further scan at {} as requested",
                         full_path.display()
-                    ));
+                    );
 
                     dir_entry.read_children_path = None;
                     return;
@@ -145,10 +134,10 @@ fn process_dir_entry<E>(
                     // on the same device as top search path, print warning and abort deeper
                     // scanning
                     if args.one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev()) {
-                        pb.println(format!(
+                        println!(
                             "Identified filesystem boundary at {}, skipping...",
                             full_path.display()
-                        ));
+                        );
                         dir_entry.read_children_path = None;
 
                         return;
@@ -160,10 +149,10 @@ fn process_dir_entry<E>(
 
                     // Print count warnings if necessary
                     if approx_files > args.blacklist_threshold {
-                        print_offender(full_path, size, approx_files, args.accurate, true, pb);
+                        print_offender(full_path, size, approx_files, args.accurate, true);
                         dir_entry.read_children_path = None;
                     } else if approx_files > args.alert_threshold {
-                        print_offender(full_path, size, approx_files, args.accurate, false, pb);
+                        print_offender(full_path, size, approx_files, args.accurate, false);
                     }
                 }
             }
@@ -180,7 +169,6 @@ fn print_offender(
     approx_files: u64,
     accurate: bool,
     red_alert: bool,
-    pb: &ProgressBar,
 ) {
     // Pretty print either the accurate directory count or the approximation
     let human_files = if accurate {
@@ -193,7 +181,7 @@ fn print_offender(
         Formatter::new().format(approx_files as f64)
     };
 
-    pb.println(format!(
+    println!(
         "Found directory {} with inode size {} and {}{} files",
         full_path.display(),
         human_bytes(size as f64),
@@ -203,5 +191,5 @@ fn print_offender(
         } else {
             Yellow.paint(human_files)
         }
-    ));
+    );
 }

@@ -1,7 +1,7 @@
-use crate::args;
+use crate::{args, progress};
+
 use anyhow::{Context, Error};
 use fs_err as fs;
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use rm_rf::ensure_removed;
 use std::fs::File;
@@ -37,20 +37,18 @@ pub fn get_inode_ratio(
         .build()
         .context("Unable to spawn calibration thread pool")?;
 
-    let pb = ProgressBar::new(args.calibration_count);
-    pb.set_style(ProgressStyle::with_template("{spinner} Files created: {pos}/{len}").unwrap());
+    let pb = progress::new_spinner("Creating test files in progress...".to_string());
 
     // Mass create files; filenames are short to get minimal size to inode ratio
     pool.install(|| {
-        (0..args.calibration_count)
-            .into_par_iter()
-            .progress_with(pb)
-            .for_each(|i| {
-                if !shutdown.load(Ordering::SeqCst) {
-                    File::create(test_path.join(i.to_string())).expect("Unable to create files");
-                }
-            });
+        (0..args.calibration_count).into_par_iter().for_each(|i| {
+            if !shutdown.load(Ordering::SeqCst) {
+                File::create(test_path.join(i.to_string())).expect("Unable to create files");
+            }
+        });
     });
+
+    pb.finish_with_message("Done.");
 
     // Terminate on received interrupt signal
     if shutdown.load(Ordering::SeqCst) {

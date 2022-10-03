@@ -2,12 +2,13 @@
 mod args;
 mod calibrate;
 mod interrupt;
+mod progress;
 mod walk;
 
 use anyhow::{Context, Error, Result};
 use clap::Parser;
 use fs_err as fs;
-use humantime::Duration;
+use humantime::Duration as HumanDuration;
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::AtomicBool;
@@ -36,6 +37,8 @@ fn main() -> Result<(), Error> {
             None => visited_paths.insert(path.clone()),
             _ => continue,
         };
+
+        println!("Started analysis for path {}", path.display());
 
         // Retrieve Unix metadata for top search path
         let path_metadata = fs::metadata(&path)?;
@@ -75,9 +78,8 @@ fn main() -> Result<(), Error> {
                 .context("Unable to calibrate inode to size ratio")?
         };
 
-        println!("Scanning filesystem path {} started", path.display());
-
         let start = Instant::now();
+        let pb = progress::new_spinner(format!("Scanning path {} in progress...", path.display()));
 
         walk::parallel_search(
             &path,
@@ -87,10 +89,12 @@ fn main() -> Result<(), Error> {
             args.clone(),
         )?;
 
+        pb.finish_with_message("Done.");
+
         println!(
-            "Scanning filesystem path {} completed. Time elapsed: {}",
+            "Scanning path {} completed. Time elapsed: {}",
             path.display(),
-            Duration::from(start.elapsed())
+            HumanDuration::from(start.elapsed())
         );
     }
 
