@@ -43,7 +43,7 @@ Options:
   -x, --threads <THREADS>
           Number of threads to use when calibrating and scanning [default: 24]
   -p, --updates <UPDATES>
-          Seconds between status updates, set to 0 to disable [default: 60]
+          Seconds between status updates, set to 0 to disable [default: 20]
   -i, --size-inode-ratio <SIZE_INODE_RATIO>
           Skip calibration and provide directory entry to inode size ratio (typically ~21-32) [default: 0]
   -t, --calibration-path <CALIBRATION_PATH>
@@ -63,3 +63,33 @@ To avoid descending into mounted filesystems (as in find -xdev option), paramete
 It is possible to completely skip calibration phase by manually providing directory inode size to number of entries ratio with `-i` parameter. It makes sense only when you already know the ratio, for example from previous runs.
 
 Setting `-p` paramter to 0 will stop program from giving occasional status updates.
+
+## Benchmarks
+
+### Findlargedir vs GNU find
+
+Benchmark setup:
+
+```shell
+$ cat bench1.sh
+#!/bin/sh
+find / -xdev -type d -size +200000c
+
+$ cat bench2.sh
+#!/bin/sh
+/usr/local/sbin/findlargedir /
+```
+
+Actual results:
+
+```shell
+$ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' ./bench1.sh ./bench2.sh
+
+Benchmark 1: ./bench1.sh
+  Time (mean ± σ):     216.122 s ±  1.118 s    [User: 1.707 s, System: 10.359 s]
+  Range (min … max):   214.701 s … 217.845 s    10 runs
+
+Benchmark 1: ./bench2.sh
+  Time (mean ± σ):     120.427 s ±  1.978 s    [User: 45.438 s, System: 92.729 s]
+  Range (min … max):   116.673 s … 123.187 s    10 runs
+```
