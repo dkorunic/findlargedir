@@ -68,7 +68,11 @@ Setting `-p` paramter to 0 will stop program from giving occasional status updat
 
 ### Findlargedir vs GNU find
 
-Benchmark setup (typical low-end server with 4-drive RAID10, better boxes and/or SSD/NVMe setups yield larger differences):
+#### Mid-range server / mechanical storage
+
+Hardware: 8-core Xeon E5-1630 with 4-drive SATA RAID-10
+
+Benchmark setup:
 
 ```shell
 $ cat bench1.sh
@@ -83,7 +87,8 @@ exec /usr/local/sbin/findlargedir /
 Actual results measured with [hyperfine](https://github.com/sharkdp/hyperfine):
 
 ```shell
-$ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' ./bench1.sh ./bench2.sh
+$ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' \
+  ./bench1.sh ./bench2.sh
 
 Benchmark 1: ./bench1.sh
   Time (mean ± σ):     223.890 s ±  1.614 s    [User: 1.820 s, System: 10.873 s]
@@ -96,4 +101,27 @@ Benchmark 2: ./bench2.sh
 Summary
   './bench2.sh' ran
     1.76 ± 0.03 times faster than './bench1.sh'
+```
+
+#### High-end server / SSD storage
+
+Hardware: 48-core Xeon Silver 4214, 7-drive SM883 SATA HW RAID-5 array, 2TB content (dozen of containers with small files)
+
+Same benchmark setup. Results:
+
+```shell
+$ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' \
+  ./bench1.sh ./bench2.sh
+
+Benchmark 1: ./bench1.sh
+  Time (mean ± σ):     397.769 s ±  0.946 s    [User: 16.870 s, System: 86.359 s]
+  Range (min … max):   396.341 s … 399.280 s    10 runs
+
+Benchmark 2: ./bench2.sh
+  Time (mean ± σ):     88.763 s ±  0.412 s    [User: 445.974 s, System: 2033.375 s]
+  Range (min … max):   88.284 s … 89.428 s    10 runs
+
+Summary
+  './bench2.sh' ran
+    4.48 ± 0.02 times faster than './bench1.sh'
 ```
