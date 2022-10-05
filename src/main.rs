@@ -15,10 +15,6 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
-use tikv_jemallocator::Jemalloc;
-
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
 
 fn main() -> Result<(), Error> {
     let args = Arc::new(args::Args::parse());

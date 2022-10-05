@@ -37,7 +37,7 @@ jobs:
       RUST_BACKTRACE: 1
     strategy:
       matrix:
-        build: [linux-amd64, linux-arm32, linux-arm64, linux-mips64, linux-riscv64, freebsd-amd64, macos-amd64, macos-m1]
+        build: [linux-amd64, linux-arm32, linux-arm64, linux-mips64, linux-riscv64, linux-powerpc64, linux-s390, freebsd-amd64, illumos-amd64, macos-amd64, macos-m1]
         include:
           - build: linux-amd64
             os: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
           - build: linux-arm32
             os: ubuntu-latest
             rust: stable
-            target: arm-unknown-linux-gnueabihf
+            target: arm-unknown-linux-musleabihf
           - build: linux-arm64
             os: ubuntu-latest
             rust: stable
@@ -59,10 +59,22 @@ jobs:
             os: ubuntu-latest
             rust: stable
             target: riscv64gc-unknown-linux-gnu
+          - build: linux-powerpc64
+            os: ubuntu-latest
+            rust: stable
+            target: powerpc64-unknown-linux-gnu
+          - build: linux-s390
+            os: ubuntu-latest
+            rust: stable
+            target: s390x-unknown-linux-gnu
           - build: freebsd-amd64
             os: ubuntu-latest
             rust: stable
             target: x86_64-unknown-freebsd
+          - build: illumos-amd64
+            os: ubuntu-latest
+            rust: stable
+            target: x86_64-unknown-illumos
           - build: macos-amd64
             os: macos-latest
             rust: stable
