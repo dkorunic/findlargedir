@@ -68,28 +68,32 @@ Setting `-p` paramter to 0 will stop program from giving occasional status updat
 
 ### Findlargedir vs GNU find
 
-Benchmark setup:
+Benchmark setup (typical low-end server with 4-drive RAID10, better boxes and/or SSD/NVMe setups yield larger differences):
 
 ```shell
 $ cat bench1.sh
-#!/bin/sh
-find / -xdev -type d -size +200000c
+#!/bin/dash
+exec /usr/bin/find / -xdev -type d -size +200000c
 
 $ cat bench2.sh
-#!/bin/sh
-/usr/local/sbin/findlargedir /
+#!/bin/dash
+exec /usr/local/sbin/findlargedir /
 ```
 
-Actual results:
+Actual results measured with [hyperfine](https://github.com/sharkdp/hyperfine):
 
 ```shell
 $ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' ./bench1.sh ./bench2.sh
 
 Benchmark 1: ./bench1.sh
-  Time (mean ± σ):     216.122 s ±  1.118 s    [User: 1.707 s, System: 10.359 s]
-  Range (min … max):   214.701 s … 217.845 s    10 runs
+  Time (mean ± σ):     223.890 s ±  1.614 s    [User: 1.820 s, System: 10.873 s]
+  Range (min … max):   221.917 s … 226.496 s    10 runs
 
-Benchmark 1: ./bench2.sh
-  Time (mean ± σ):     120.427 s ±  1.978 s    [User: 45.438 s, System: 92.729 s]
-  Range (min … max):   116.673 s … 123.187 s    10 runs
+Benchmark 2: ./bench2.sh
+  Time (mean ± σ):     127.142 s ±  1.712 s    [User: 48.812 s, System: 100.069 s]
+  Range (min … max):   124.158 s … 129.316 s    10 runs
+
+Summary
+  './bench2.sh' ran
+    1.76 ± 0.03 times faster than './bench1.sh'
 ```
