@@ -37,7 +37,7 @@ pub fn get_inode_ratio(
         .build()
         .context("Unable to spawn calibration thread pool")?;
 
-    let pb = progress::new_spinner("Creating test files in progress...".to_string());
+    let pb = progress::new_spinner("Creating test files in progress...");
 
     // Mass create files; filenames are short to get minimal size to inode ratio
     pool.install(|| {
