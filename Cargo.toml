@@ -11,20 +11,20 @@ exclude = [".gitignore"]
 edition = "2021"
 
 [dependencies]
-jwalk = "~0"
-rayon = "~1"
-num_cpus = "~1"
-tempfile = "~3"
-anyhow = "~1"
-human_format = "~1"
-human_bytes = { version = "~0", features = ["fast"] }
-humantime = "~2"
-clap = { version = "~4", features = ["derive"] }
-ctrlc = { version = "~3", features = ["termination"] }
-rm_rf = "~0"
-ansi_term = "~0"
-fs-err = "~2"
-indicatif = { version = "~0", features = ["rayon"] }
+jwalk = "0.6.0"
+rayon = "1.6.1"
+num_cpus = "1.14.0"
+tempfile = "3.3.0"
+anyhow = "1.0.66"
+human_format = "1.0.3"
+human_bytes = { version = "0.4.1", features = ["fast"] }
+humantime = "2.1.0"
+clap = { version = "4.0.29", features = ["derive"] }
+ctrlc = { version = "3.2.4", features = ["termination"] }
+rm_rf = "0.6.2"
+ansi_term = "0.12.1"
+fs-err = "2.9.0"
+indicatif = { version = "0.17.2", features = ["rayon"] }
 
 [profile.release]
 lto = true
