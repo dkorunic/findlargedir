@@ -15,7 +15,7 @@ jwalk = "0.8.1"
 rayon = "1.6.1"
 num_cpus = "1.14.0"
 tempfile = "3.3.0"
-anyhow = "1.0.66"
+anyhow = "1.0.67"
 human_format = "1.0.3"
 human_bytes = { version = "0.4.1", features = ["fast"] }
 humantime = "2.1.0"
