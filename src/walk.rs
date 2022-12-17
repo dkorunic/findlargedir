@@ -75,7 +75,10 @@ pub fn parallel_search(
     for _ in WalkDir::new(path)
         .skip_hidden(false)
         .sort(false)
-        .parallelism(Parallelism::RayonExistingPool(pool))
+        .parallelism(Parallelism::RayonExistingPool {
+            pool,
+            busy_timeout: None,
+        })
         .process_read_dir(move |_, _, _, children| {
             // Terminate on received interrupt signal
             if shutdown.load(Ordering::SeqCst) {
