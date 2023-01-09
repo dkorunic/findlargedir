@@ -30,6 +30,7 @@ jobs:
     name: build-release
     needs: ["create-release"]
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.experimental }}
     env:
       CARGO: cargo
       TARGET_FLAGS: ""
@@ -49,9 +50,11 @@ jobs:
             linux-s390,
             freebsd-amd64,
             illumos-amd64,
+            solaris-amd64,
             macos-amd64,
             macos-m1,
           ]
+        experimental: [false]
         include:
           - build: linux-amd64
             os: ubuntu-latest
@@ -69,26 +72,37 @@ jobs:
             os: ubuntu-latest
             rust: stable
             target: mips64-unknown-linux-muslabi64
+            experimental: true
           - build: linux-riscv64
             os: ubuntu-latest
             rust: stable
             target: riscv64gc-unknown-linux-gnu
+            experimental: true
           - build: linux-powerpc64
             os: ubuntu-latest
             rust: stable
             target: powerpc64-unknown-linux-gnu
+            experimental: true
           - build: linux-s390
             os: ubuntu-latest
             rust: stable
             target: s390x-unknown-linux-gnu
+            experimental: true
           - build: freebsd-amd64
             os: ubuntu-latest
             rust: stable
             target: x86_64-unknown-freebsd
+            experimental: true
           - build: illumos-amd64
             os: ubuntu-latest
             rust: stable
             target: x86_64-unknown-illumos
+            experimental: true
+          - build: solaris-amd64
+            os: ubuntu-latest
+            rust: stable
+            target: x86_64-sun-solaris
+            experimental: true
           - build: macos-amd64
             os: macos-latest
             rust: stable
