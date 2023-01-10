@@ -49,8 +49,8 @@ jobs:
             linux-powerpc64,
             linux-s390,
             freebsd-amd64,
+            openbsd-amd64,
             illumos-amd64,
-            solaris-amd64,
             macos-amd64,
             macos-m1,
           ]
@@ -95,15 +95,15 @@ jobs:
             rust: stable
             target: x86_64-unknown-freebsd
             experimental: true
+          - build: openbsd-amd64
+            os: ubuntu-latest
+            rust: stable
+            target: x86_64-unknown-openbsd
+            experimental: true
           - build: illumos-amd64
             os: ubuntu-latest
             rust: stable
             target: x86_64-unknown-illumos
-            experimental: true
-          - build: solaris-amd64
-            os: ubuntu-latest
-            rust: stable
-            target: x86_64-sun-solaris
             experimental: true
           - build: macos-amd64
             os: macos-latest
