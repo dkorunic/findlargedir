@@ -59,10 +59,7 @@ pub fn get_inode_ratio(
     }
 
     let size_inode_ratio = fs::metadata(test_path)?.size() / args.calibration_count;
-    println!(
-        "Calibration done. Calculated size-to-inode ratio: {}",
-        size_inode_ratio
-    );
+    println!("Calibration done. Calculated size-to-inode ratio: {size_inode_ratio}");
 
     Ok(size_inode_ratio)
 }
