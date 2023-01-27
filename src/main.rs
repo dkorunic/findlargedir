@@ -18,13 +18,16 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 cfg_if! {
-    if #[cfg(linux)] {
-        if #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] {
-            use tikv_jemallocator::Jemalloc;
+    if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
+        use tikv_jemallocator::Jemalloc;
 
-            #[global_allocator]
-            static GLOBAL: Jemalloc = Jemalloc;
-        }
+        #[global_allocator]
+        static GLOBAL: Jemalloc = Jemalloc;
+    } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
+        use tikv_jemallocator::Jemalloc;
+
+        #[global_allocator]
+        static GLOBAL: Jemalloc = Jemalloc;
     }
 }
 
