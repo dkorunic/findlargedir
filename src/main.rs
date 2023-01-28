@@ -19,15 +19,15 @@ use tempfile::TempDir;
 
 cfg_if! {
     if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
-        use tikv_jemallocator::Jemalloc;
+        use mimalloc::MiMalloc;
 
         #[global_allocator]
-        static GLOBAL: Jemalloc = Jemalloc;
+        static GLOBAL: MiMalloc = MiMalloc;
     } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
-        use tikv_jemallocator::Jemalloc;
+        use mimalloc::MiMalloc;
 
         #[global_allocator]
-        static GLOBAL: Jemalloc = Jemalloc;
+        static GLOBAL: MiMalloc = MiMalloc;
     }
 }
 
