@@ -19,9 +19,7 @@ use std::time::Instant;
 use tempfile::TempDir;
 
 cfg_if! {
-    if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
-        use_mimalloc!();
-    } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
+    if #[cfg(target_os = "linux")] {
         use_mimalloc!();
     } else if #[cfg(target_os = "macos")] {
         use_mimalloc!();
