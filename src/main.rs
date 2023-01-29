@@ -1,4 +1,5 @@
 #![warn(clippy::all, clippy::pedantic)]
+
 mod args;
 mod calibrate;
 mod interrupt;
@@ -19,15 +20,11 @@ use tempfile::TempDir;
 
 cfg_if! {
     if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
-        use mimalloc::MiMalloc;
-
-        #[global_allocator]
-        static GLOBAL: MiMalloc = MiMalloc;
+        use_mimalloc!();
     } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
-        use mimalloc::MiMalloc;
-
-        #[global_allocator]
-        static GLOBAL: MiMalloc = MiMalloc;
+        use_mimalloc!();
+    } else if #[cfg(target_os = "macos")] {
+        use_mimalloc!();
     }
 }
 
@@ -110,4 +107,14 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[macro_export]
+macro_rules! use_mimalloc {
+    () => {
+        use mimalloc::MiMalloc;
+
+        #[global_allocator]
+        static GLOBAL: MiMalloc = MiMalloc;
+    };
 }
