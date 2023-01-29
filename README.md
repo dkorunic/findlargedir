@@ -114,14 +114,14 @@ $ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' \
   ./bench1.sh ./bench2.sh
 
 Benchmark 1: ./bench1.sh
-  Time (mean ± σ):     397.769 s ±  0.946 s    [User: 16.870 s, System: 86.359 s]
-  Range (min … max):   396.341 s … 399.280 s    10 runs
+  Time (mean ± σ):     392.433 s ±  1.952 s    [User: 16.056 s, System: 81.994 s]
+  Range (min … max):   390.284 s … 395.732 s    10 runs
 
 Benchmark 2: ./bench2.sh
-  Time (mean ± σ):     88.763 s ±  0.412 s    [User: 445.974 s, System: 2033.375 s]
-  Range (min … max):   88.284 s … 89.428 s    10 runs
+  Time (mean ± σ):     34.650 s ±  0.469 s    [User: 79.441 s, System: 528.939 s]
+  Range (min … max):   34.049 s … 35.388 s    10 runs
 
 Summary
   './bench2.sh' ran
-    4.48 ± 0.02 times faster than './bench1.sh'
+   11.33 ± 0.16 times faster than './bench1.sh'
 ```
