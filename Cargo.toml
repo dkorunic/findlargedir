@@ -12,14 +12,14 @@ edition = "2021"
 
 [dependencies]
 jwalk = "0.8.1"
-rayon = "1.6.1"
+rayon = "1.7.0"
 num_cpus = "1.15.0"
 tempfile = "3.4.0"
 anyhow = "1.0.69"
 human_format = "1.0.3"
 human_bytes = { version = "0.4.1", features = ["fast"] }
 humantime = "2.1.0"
-clap = { version = "4.1.6", features = ["derive"] }
+clap = { version = "4.1.8", features = ["derive"] }
 ctrlc = { version = "3.2.5", features = ["termination"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"

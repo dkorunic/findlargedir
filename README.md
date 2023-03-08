@@ -3,6 +3,7 @@
 [![GitHub license](https://img.shields.io/github/license/dkorunic/findlargedir.svg)](https://github.com/dkorunic/findlargedir/blob/master/LICENSE.txt)
 [![GitHub release](https://img.shields.io/github/release/dkorunic/findlargedir.svg)](https://github.com/dkorunic/findlargedir/releases/latest)
 [![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/dkorunic/findlargedir)](https://rust-reportcard.xuri.me/report/github.com/dkorunic/findlargedir)
+[![release](https://github.com/dkorunic/findlargedir/actions/workflows/release.yml/badge.svg)](https://github.com/dkorunic/findlargedir/actions/workflows/release.yml)
 
 ![](ferris.png)
 
