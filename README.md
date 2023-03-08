@@ -4,6 +4,10 @@
 [![GitHub release](https://img.shields.io/github/release/dkorunic/findlargedir.svg)](https://github.com/dkorunic/findlargedir/releases/latest)
 [![Rust Report Card](https://rust-reportcard.xuri.me/badge/github.com/dkorunic/findlargedir)](https://rust-reportcard.xuri.me/report/github.com/dkorunic/findlargedir)
 
+![](ferris.png)
+
+(Logo by [Esther Arzola](https://www.redbubble.com/people/earzola/shop), original design by Karen Rustad Tölva)
+
 ## About
 
 Findlargedir is a tool specifically written to help **quickly** identify "black hole" directories on an any filesystem having more than 100k entries in a single flat structure. When a directory has **many entries** (directories or files), getting directory listing gets slower and slower, impacting performance of all processes attempting to get a directory listing (for instance to delete some files and/or to find some specific files). Processes reading large directory inodes get frozen while doing so and end up in the **uninterruptible sleep** ("D" state) for longer and longer periods of time. Depending on the filesystem, this might start to become visible with 100k entries and starts being a very noticeable performance impact with 1M+ entries.
