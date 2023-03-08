@@ -7,7 +7,7 @@
 
 ![](ferris.png)
 
-(Logo by [Esther Arzola](https://www.redbubble.com/people/earzola/shop), original design by Karen Rustad Tölva)
+(Ferris the Detective by [Esther Arzola](https://www.redbubble.com/people/earzola/shop), original design by [Karen Rustad Tölva](https://www.rustacean.net))
 
 ## About
 
