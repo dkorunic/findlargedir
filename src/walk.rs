@@ -86,7 +86,7 @@ pub fn parallel_search(
                 process::exit(ERROR_EXIT);
             }
 
-            for dir_entry_result in children.iter_mut() {
+            for dir_entry_result in &mut *children {
                 process_dir_entry(
                     &path_metadata,
                     size_inode_ratio,
