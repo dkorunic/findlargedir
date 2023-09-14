@@ -1,15 +1,16 @@
-use crate::{args, progress};
-
-use anyhow::{Context, Error};
-use fs_err as fs;
-use rayon::prelude::*;
-use rm_rf::ensure_removed;
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+use anyhow::{Context, Error};
+use fs_err as fs;
+use rayon::prelude::*;
+use rm_rf::ensure_removed;
+
+use crate::{args, progress};
 
 /// Default number of files to create in the calibration directory
 pub const DEFAULT_TEST_COUNT: u64 = 100_000;

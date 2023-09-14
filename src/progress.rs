@@ -1,5 +1,6 @@
-use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
+
+use indicatif::{ProgressBar, ProgressStyle};
 
 /// Default tick chars
 const PROGRESS_CHARS: &str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";

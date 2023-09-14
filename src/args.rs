@@ -1,8 +1,9 @@
+use std::path::PathBuf;
+
 use anyhow::{anyhow, Error};
 use clap::builder::ValueParser;
 use clap::Parser;
 use clap::ValueHint;
-use std::path::PathBuf;
 
 #[derive(Parser, Default, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]

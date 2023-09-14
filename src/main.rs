@@ -1,22 +1,23 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-mod args;
-mod calibrate;
-mod interrupt;
-mod progress;
-mod walk;
+use std::collections::HashSet;
+use std::os::unix::fs::MetadataExt;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Error, Result};
 use cfg_if::cfg_if;
 use clap::Parser;
 use fs_err as fs;
 use humantime::Duration as HumanDuration;
-use std::collections::HashSet;
-use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
-use std::time::Instant;
 use tempfile::TempDir;
+
+mod args;
+mod calibrate;
+mod interrupt;
+mod progress;
+mod walk;
 
 cfg_if! {
     if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {

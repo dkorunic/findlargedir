@@ -14,13 +14,13 @@ edition = "2021"
 jwalk = "0.8.1"
 rayon = "1.7.0"
 num_cpus = "1.16.0"
-tempfile = "3.7.0"
-anyhow = "1.0.72"
+tempfile = "3.8.0"
+anyhow = "1.0.75"
 human_format = "1.0.3"
-human_bytes = { version = "0.4.2", features = ["fast"] }
+human_bytes = { version = "0.4.3", features = ["fast"] }
 humantime = "2.1.0"
-clap = { version = "4.3.19", features = ["derive"] }
-ctrlc = { version = "3.4.0", features = ["termination"] }
+clap = { version = "4.4.3", features = ["derive"] }
+ctrlc = { version = "3.4.1", features = ["termination"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
 fs-err = "2.9.0"
@@ -28,13 +28,13 @@ indicatif = { version = "0.17.6", features = ["rayon"] }
 cfg-if = "1.0"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-mimalloc = { version = "0.1.37", default-features = false }
+mimalloc = { version = "0.1.39", default-features = false }
 
 [target.'cfg(all(target_os = "linux", target_arch = "aarch64"))'.dependencies]
-mimalloc = { version = "0.1.37", default-features = false }
+mimalloc = { version = "0.1.39", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-mimalloc = { version = "0.1.37", default-features = false }
+mimalloc = { version = "0.1.39", default-features = false }
 
 [profile.release]
 lto = true

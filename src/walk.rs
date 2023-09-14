@@ -1,11 +1,3 @@
-use crate::args;
-
-use ansi_term::Colour::{Green, Red, Yellow};
-use anyhow::{Context, Error};
-use fs_err as fs;
-use human_bytes::human_bytes;
-use human_format::Formatter;
-use jwalk::{DirEntry, Parallelism, WalkDir};
 use std::collections::HashSet;
 use std::fs::read_dir;
 use std::fs::Metadata;
@@ -17,6 +9,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
+
+use ansi_term::Colour::{Green, Red, Yellow};
+use anyhow::{Context, Error};
+use fs_err as fs;
+use human_bytes::human_bytes;
+use human_format::Formatter;
+use jwalk::{DirEntry, Parallelism, WalkDir};
+
+use crate::args;
 
 /// Default number of files in a folder to cause alert
 pub const ALERT_COUNT: u64 = 10_000;
