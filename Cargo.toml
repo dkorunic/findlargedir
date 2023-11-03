@@ -1,6 +1,6 @@
 [package]
 name = "findlargedir"
-version = "0.5.7"
+version = "0.6.0"
 authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "find all blackhole directories with a huge amount of filesystem entries in a flat structure"
@@ -12,20 +12,21 @@ edition = "2021"
 
 [dependencies]
 jwalk = "0.8.1"
-rayon = "1.7.0"
+rayon = "1.8.0"
 num_cpus = "1.16.0"
-tempfile = "3.8.0"
+tempfile = "3.8.1"
 anyhow = "1.0.75"
 human_format = "1.0.3"
 human_bytes = { version = "0.4.3", features = ["fast"] }
 humantime = "2.1.0"
-clap = { version = "4.4.3", features = ["derive"] }
+clap = { version = "4.4.7", features = ["derive"] }
 ctrlc = { version = "3.4.1", features = ["termination"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
 fs-err = "2.9.0"
-indicatif = { version = "0.17.6", features = ["rayon"] }
+indicatif = { version = "0.17.7", features = ["rayon"] }
 cfg-if = "1.0"
+fdlimit = "0.2.1"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 mimalloc = { version = "0.1.39", default-features = false }

@@ -116,6 +116,11 @@ fn process_dir_entry<E>(
     dir_count_walk: &Arc<AtomicU64>,
 ) {
     if let Ok(dir_entry) = dir_entry_result {
+        if let Some(ref err) = dir_entry.read_children_error {
+            println!("Fatal program error, exiting: {err}");
+            process::exit(ERROR_EXIT)
+        }
+
         if dir_entry.file_type.is_dir() {
             if let Some(full_path) = dir_entry.read_children_path.as_ref() {
                 // Visited directory count

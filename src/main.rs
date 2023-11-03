@@ -9,6 +9,7 @@ use std::time::Instant;
 use anyhow::{Context, Error, Result};
 use cfg_if::cfg_if;
 use clap::Parser;
+use fdlimit::raise_fd_limit;
 use fs_err as fs;
 use humantime::Duration as HumanDuration;
 use tempfile::TempDir;
@@ -36,6 +37,16 @@ fn main() -> Result<(), Error> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_scan = shutdown.clone();
     interrupt::setup_interrupt_handler(shutdown)?;
+
+    println!(
+        "Using {} threads for calibration and scanning",
+        args.threads
+    );
+
+    // Attempt to raise FD limit
+    if let Some(x) = raise_fd_limit() {
+        println!("Maximum number of file descriptors available: {x}");
+    }
 
     // Search only unique paths
     let mut visited_paths = HashSet::with_capacity(args.path.len());
