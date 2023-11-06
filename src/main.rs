@@ -22,11 +22,11 @@ mod walk;
 
 cfg_if! {
     if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
-        use_mimalloc!();
+        use_jemalloc!();
     } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
-        use_mimalloc!();
+        use_jemalloc!();
     } else if #[cfg(target_os = "macos")] {
-        use_mimalloc!();
+        use_jemalloc!();
     }
 }
 
@@ -122,11 +122,11 @@ fn main() -> Result<(), Error> {
 }
 
 #[macro_export]
-macro_rules! use_mimalloc {
+macro_rules! use_jemalloc {
     () => {
-        use mimalloc::MiMalloc;
+        use tikv_jemallocator::Jemalloc;
 
         #[global_allocator]
-        static GLOBAL: MiMalloc = MiMalloc;
+        static GLOBAL: Jemalloc = Jemalloc;
     };
 }
