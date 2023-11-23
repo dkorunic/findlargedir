@@ -1,18 +1,18 @@
 #![warn(clippy::all, clippy::pedantic)]
 
+use anyhow::{Context, Error, Result};
+use cfg_if::cfg_if;
+use clap::Parser;
+use fdlimit::{raise_fd_limit, Outcome};
+use humantime::Duration as HumanDuration;
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
-
-use anyhow::{Context, Error, Result};
-use cfg_if::cfg_if;
-use clap::Parser;
-use fdlimit::raise_fd_limit;
-use fs_err as fs;
-use humantime::Duration as HumanDuration;
 use tempfile::TempDir;
+
+use fs_err as fs;
 
 mod args;
 mod calibrate;
@@ -44,7 +44,7 @@ fn main() -> Result<(), Error> {
     );
 
     // Attempt to raise FD limit
-    if let Some(x) = raise_fd_limit() {
+    if let Ok(Outcome::LimitRaised { to: x, .. }) = raise_fd_limit() {
         println!("Maximum number of file descriptors available: {x}");
     }
 
