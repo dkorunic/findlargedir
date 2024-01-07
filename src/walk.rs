@@ -80,7 +80,7 @@ pub fn parallel_search(
             pool,
             busy_timeout: None,
         })
-        .process_read_dir(move |_, _, _, children| {
+        .process_read_dir(move |_, _, (), children| {
             // Terminate on received interrupt signal
             if shutdown.load(Ordering::SeqCst) {
                 println!("Requested program exit, stopping scan...");
