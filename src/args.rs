@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::thread;
 
 use anyhow::{anyhow, Error};
 use clap::builder::ValueParser;
@@ -29,7 +30,7 @@ pub struct Args {
     pub blacklist_threshold: u64,
 
     /// Number of threads to use when calibrating and scanning
-    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = num_cpus::get())]
+    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(1))]
     pub threads: usize,
 
     /// Seconds between status updates, set to 0 to disable

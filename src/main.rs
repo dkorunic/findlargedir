@@ -1,18 +1,18 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-use anyhow::{Context, Error, Result};
-use cfg_if::cfg_if;
-use clap::Parser;
-use fdlimit::{raise_fd_limit, Outcome};
-use humantime::Duration as HumanDuration;
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
-use tempfile::TempDir;
 
+use anyhow::{Context, Error, Result};
+use cfg_if::cfg_if;
+use clap::Parser;
+use fdlimit::{raise_fd_limit, Outcome};
 use fs_err as fs;
+use humantime::Duration as HumanDuration;
+use tempfile::TempDir;
 
 mod args;
 mod calibrate;
