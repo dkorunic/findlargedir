@@ -18,23 +18,41 @@ pub const DEFAULT_TEST_COUNT: u64 = 100_000;
 /// Default exit error code in case of premature termination
 const ERROR_EXIT: i32 = 1;
 
-/// Calculates or retrieves the inode size ratio used for estimating file counts in directories.
+/// Calculates the size-to-inode ratio for a given directory.
 ///
-/// This function determines the ratio of inode size to file count, which is used to estimate
-/// the number of files in a directory without reading its entire contents. This can be useful
-/// for performance optimizations in filesystem scanning operations.
+/// This function initiates a calibration process by creating a specified number of files
+/// within the `test_path` directory to determine the average file size to inode ratio.
+/// It uses a multi-threaded approach to create files and monitors for a shutdown signal
+/// to safely terminate and clean up if necessary.
 ///
-/// # Returns:
-/// - `u64`: The inode size ratio, representing the average size of an inode in the filesystem.
+/// # Arguments
+/// * `test_path` - A reference to the path where test files will be created.
+/// * `shutdown` - A shared atomic boolean to signal shutdown and cleanup.
+/// * `args` - A shared structure containing runtime arguments such as the number of threads
+///   and the number of files to create for calibration.
 ///
-/// # Example:
+/// # Returns
+/// Returns a `Result<u64, Error>` which is the calculated size-to-inode ratio if successful,
+/// or an error if the operation fails at any step.
+///
+/// # Errors
+/// This function can return an error if it fails to create the thread pool, create files,
+/// delete the directory, or retrieve metadata from the test directory.
+///
+/// # Examples
 /// ```
-/// let inode_ratio = get_inode_ratio();
-/// println!("The inode size ratio is {}", inode_ratio);
+/// let test_path = Path::new("/tmp/test_dir");
+/// let shutdown = Arc::new(AtomicBool::new(false));
+/// let args = Arc::new(args::Args {
+///     threads: 4,
+///     calibration_count: 1000,
+/// });
+/// let ratio = get_inode_ratio(&test_path, &shutdown, &args);
+/// match ratio {
+///     Ok(ratio) => println!("Size-to-inode ratio: {}", ratio),
+///     Err(e) => println!("Failed to calculate size-to-inode ratio: {}", e),
+/// }
 /// ```
-///
-/// This function is essential for filesystem analysis tasks where performance is critical,
-/// such as large-scale file system scans.
 pub fn get_inode_ratio(
     test_path: &Path,
     shutdown: &Arc<AtomicBool>,

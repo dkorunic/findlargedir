@@ -125,10 +125,27 @@ pub fn parallel_search(
     Ok(())
 }
 
-/// Processes each directory entry and in case of a directory inode, determines directory inode
-/// size and possible directory entry count. If count exceeds `blacklist_threshold`, it will
-/// give out fatal warning and abort deeper scanning, and in case of count being just above
-/// `alert_threshold` but below `blacklist_threshold` it will print just an informative warning.
+/// Executes a parallel search of directories starting from a specified path.
+///
+/// This function initiates a filesystem walk from the given path, processing each directory
+/// in parallel using a thread pool. It handles directory exclusions, periodic status updates,
+/// and can gracefully shutdown upon receiving an interrupt signal.
+///
+/// # Arguments
+/// * `path` - A reference to the `PathBuf` that specifies the starting point of the search.
+/// * `path_metadata` - Metadata of the initial path, used for comparison in certain conditions.
+/// * `size_inode_ratio` - The ratio used to estimate the number of entries in a directory.
+/// * `shutdown` - An `Arc<AtomicBool>` that signals if the operation should be prematurely terminated.
+/// * `args` - An `Arc` containing the arguments passed to the program, influencing behavior like
+///            thread count, update intervals, and path exclusions.
+///
+/// # Returns
+/// A `Result<(), Error>` indicating the outcome of the operation. It returns `Ok(())` if the
+/// search completes successfully or an `Err(Error)` if an error occurs during the setup or execution.
+///
+/// # Errors
+/// This function can return an error if there is a failure in setting up the thread pool or during
+/// the directory walking process.
 fn process_dir_entry<E>(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
@@ -192,8 +209,17 @@ fn process_dir_entry<E>(
 }
 
 #[allow(clippy::cast_precision_loss)]
-/// Print directory information with inode size from metadata and approximate directory entry
-/// count.
+/// Prints information about directories that exceed specified thresholds.
+///
+/// This function is called when the estimated number of files in a directory exceeds either the alert or blacklist thresholds.
+/// It outputs details about the directory and its file count, and can optionally mark the directory as an offender based on its size.
+///
+/// # Arguments
+/// * `path` - The path of the directory being evaluated.
+/// * `size` - The size of the directory in bytes.
+/// * `file_count` - The estimated number of files in the directory.
+/// * `accurate` - A boolean flag indicating whether the size estimation is considered accurate.
+/// * `is_blacklisted` - A boolean flag indicating whether the directory exceeds the blacklist threshold.
 fn print_offender(
     full_path: &Arc<Path>,
     size: u64,

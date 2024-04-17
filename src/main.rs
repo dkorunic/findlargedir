@@ -134,6 +134,7 @@ fn main() -> Result<(), Error> {
 
     Ok(())
 }
+
 /// Macro to enable the use of the jemalloc allocator in a Rust project.
 ///
 /// This macro configures the project to use jemalloc instead of the default

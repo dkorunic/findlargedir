@@ -21,12 +21,6 @@ const PROGRESS_TICK: u64 = 80;
 /// let spinner = new_spinner("Loading...");
 /// ```
 pub fn new_spinner<S>(msg: S) -> ProgressBar
-    where S: Into<String>
-{
-    // function implementation
-}
-
-pub fn new_spinner<S>(msg: S) -> ProgressBar
     where
         S: Into<String>,
 {
