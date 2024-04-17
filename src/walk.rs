@@ -1,12 +1,12 @@
 use std::collections::HashSet;
-use std::fs::read_dir;
 use std::fs::Metadata;
+use std::fs::read_dir;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -32,8 +32,30 @@ const ERROR_EXIT: i32 = 1;
 /// Default status update period in seconds
 pub const STATUS_SECONDS: u64 = 20;
 
-/// Scans a given path and calls `process_dir_entry()` for each entry. In case `shutdown` has
-/// been set by interrupt signal handler, process will exit with `ERROR_EXIT` code.
+/// Performs a parallel filesystem scan from a specified path using a thread pool.
+///
+/// This function scans directories starting from the given path, processing each directory entry
+/// and updating the status periodically. It checks for a shutdown signal to gracefully stop the scan.
+///
+/// # Parameters:
+/// - `path: &PathBuf`: The root path from where the scan starts.
+/// - `path_metadata: Metadata`: Metadata of the root path for comparison and checks during the scan.
+/// - `size_inode_ratio: u64`: Ratio to estimate file counts in directories based on inode size.
+/// - `shutdown: Arc<AtomicBool>`: Shared flag to signal a shutdown, set by an interrupt handler.
+/// - `args: Arc<args::Args>`: Contains configuration such as thread count, update intervals, and exclusion paths.
+///
+/// # Behavior:
+/// - Initializes exclusion paths and sets up a thread pool for directory processing and status updates.
+/// - Checks the `shutdown` flag periodically and exits with `ERROR_EXIT` code if set.
+/// - Processes each directory entry to evaluate conditions like file count thresholds.
+/// - Provides periodic status updates if enabled in `args`.
+///
+/// # Error Handling:
+/// - Exits with an error code if unable to create the thread pool.
+/// - Handles errors during directory traversal and metadata access.
+///
+/// # Returns:
+/// - `Result<(), Error>`: Ok if the scan completes successfully, or an error wrapped in `Err` otherwise.
 pub fn parallel_search(
     path: &PathBuf,
     path_metadata: Metadata,

@@ -2,8 +2,8 @@ use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Error};
 use fs_err as fs;
@@ -18,10 +18,23 @@ pub const DEFAULT_TEST_COUNT: u64 = 100_000;
 /// Default exit error code in case of premature termination
 const ERROR_EXIT: i32 = 1;
 
-/// Creates `test_count` files in `test_path` as fast as possible, gets final test directory
-/// inode size and establishes directory total size to directory count ratio that can be used
-/// to guess directory counts directly from directory inode size. Temporary calibration directory
-/// is erased both on success and termination through interrupt signals.
+/// Calculates or retrieves the inode size ratio used for estimating file counts in directories.
+///
+/// This function determines the ratio of inode size to file count, which is used to estimate
+/// the number of files in a directory without reading its entire contents. This can be useful
+/// for performance optimizations in filesystem scanning operations.
+///
+/// # Returns:
+/// - `u64`: The inode size ratio, representing the average size of an inode in the filesystem.
+///
+/// # Example:
+/// ```
+/// let inode_ratio = get_inode_ratio();
+/// println!("The inode size ratio is {}", inode_ratio);
+/// ```
+///
+/// This function is essential for filesystem analysis tasks where performance is critical,
+/// such as large-scale file system scans.
 pub fn get_inode_ratio(
     test_path: &Path,
     shutdown: &Arc<AtomicBool>,
@@ -53,7 +66,7 @@ pub fn get_inode_ratio(
 
     // Terminate on received interrupt signal
     if shutdown.load(Ordering::SeqCst) {
-        println!("Requested program exit, stopping and deleting temporary files...",);
+        println!("Requested program exit, stopping and deleting temporary files...", );
         ensure_removed(test_path)
             .expect("Unable to completely delete calibration directory, exiting");
         process::exit(ERROR_EXIT);

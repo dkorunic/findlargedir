@@ -2,14 +2,14 @@
 
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use anyhow::{Context, Error, Result};
 use cfg_if::cfg_if;
 use clap::Parser;
-use fdlimit::{raise_fd_limit, Outcome};
+use fdlimit::{Outcome, raise_fd_limit};
 use fs_err as fs;
 use humantime::Duration as HumanDuration;
 use tempfile::TempDir;
@@ -30,6 +30,20 @@ cfg_if! {
     }
 }
 
+/// Entry point for the filesystem scanning application.
+///
+/// This function sets up necessary configurations and initiates the parallel filesystem scan
+/// by calling `parallel_search`. It handles command-line arguments and sets up the environment
+/// for the application to run.
+///
+/// # Behavior:
+/// - Parses command-line arguments to configure the scanning process.
+/// - Sets up signal handling for graceful shutdowns.
+/// - Initiates the filesystem scan by calling `parallel_search` with appropriate parameters.
+/// - Handles any errors returned by `parallel_search` and exits with an appropriate status code.
+///
+/// # Returns:
+/// - Typically does not return and calls `std::process::exit` to terminate the program.
 fn main() -> Result<(), Error> {
     let args = Arc::new(args::Args::parse());
 
@@ -120,7 +134,23 @@ fn main() -> Result<(), Error> {
 
     Ok(())
 }
-
+/// Macro to enable the use of the jemalloc allocator in a Rust project.
+///
+/// This macro configures the project to use jemalloc instead of the default
+/// allocator. jemalloc is often preferred for its performance characteristics,
+/// especially in multithreaded environments.
+///
+/// # Usage
+/// Place this macro at the top of your main.rs or lib.rs to enable jemalloc
+/// for your entire Rust project.
+///
+/// # Example
+/// ```
+/// use_jemalloc!();
+/// ```
+///
+/// Note: Ensure that the `jemalloc` crate is included in your project's
+/// dependencies.
 #[macro_export]
 macro_rules! use_jemalloc {
     () => {

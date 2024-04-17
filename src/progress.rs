@@ -8,11 +8,27 @@ const PROGRESS_CHARS: &str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 /// Default tick in milliseconds
 const PROGRESS_TICK: u64 = 80;
 
-/// Setup a `ProgressBar` with spinner, setup `PROGRESS_CHARS` for spinner and enable steady tick
-/// every `PROGRESS_TICK` seconds
+/// Initializes a new `ProgressBar` with a spinner style.
+///
+/// # Arguments
+/// * `msg` - A message of generic type `S` that implements `Into<String>`, which will be displayed on the spinner.
+///
+/// # Returns
+/// Returns a `ProgressBar` object configured with a steady tick and custom spinner style.
+///
+/// # Examples
+/// ```
+/// let spinner = new_spinner("Loading...");
+/// ```
 pub fn new_spinner<S>(msg: S) -> ProgressBar
-where
-    S: Into<String>,
+    where S: Into<String>
+{
+    // function implementation
+}
+
+pub fn new_spinner<S>(msg: S) -> ProgressBar
+    where
+        S: Into<String>,
 {
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(PROGRESS_TICK));
