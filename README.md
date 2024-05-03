@@ -130,3 +130,7 @@ Summary
   './bench2.sh' ran
    11.33 ± 0.16 times faster than './bench1.sh'
 ```
+
+## Star history
+
+[![Star History Chart](https://api.star-history.com/svg?repos=dkorunic/findlargedir&type=Date)](https://star-history.com/#dkorunic/findlargedir&Date)
