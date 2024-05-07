@@ -1,7 +1,9 @@
 version: 2
 updates:
-  - package-ecosystem: "cargo"
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    rebase-strategy: "disabled"
+      day: "sunday"
+      time: "22:00"
+    open-pull-requests-limit: 10
