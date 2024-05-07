@@ -71,7 +71,7 @@ jobs:
           - build: linux-mips64
             os: ubuntu-latest
             rust: stable
-            target: mips64-unknown-linux-muslabi64
+            target: mips64-unknown-linux-gnuabi64
             experimental: true
           - build: linux-riscv64
             os: ubuntu-latest
