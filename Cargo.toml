@@ -14,7 +14,7 @@ edition = "2021"
 jwalk = "0.8.1"
 rayon = "1.10.0"
 tempfile = "3.10.1"
-anyhow = "1.0.82"
+anyhow = "1.0.83"
 human_format = "1.1.0"
 human_bytes = { version = "0.4.3", features = ["fast"] }
 humantime = "2.1.0"
@@ -37,6 +37,8 @@ tikv-jemallocator = "0.5.4"
 tikv-jemallocator = "0.5.4"
 
 [profile.release]
-lto = true
+lto = "fat"
 strip = true
 overflow-checks = true
+codegen-units = 1
+panic = "abort"
