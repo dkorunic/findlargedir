@@ -14,11 +14,11 @@ edition = "2021"
 jwalk = "0.8.1"
 rayon = "1.10.0"
 tempfile = "3.10.1"
-anyhow = "1.0.83"
+anyhow = "1.0.86"
 human_format = "1.1.0"
 human_bytes = { version = "0.4.3", features = ["fast"] }
 humantime = "2.1.0"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.7", features = ["derive"] }
 ctrlc = { version = "3.4.4", features = ["termination"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
