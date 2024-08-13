@@ -2,8 +2,8 @@ use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use anyhow::{Context, Error};
 use fs_err as fs;
@@ -84,7 +84,7 @@ pub fn get_inode_ratio(
 
     // Terminate on received interrupt signal
     if shutdown.load(Ordering::SeqCst) {
-        println!("Requested program exit, stopping and deleting temporary files...", );
+        println!("Requested program exit, stopping and deleting temporary files...",);
         ensure_removed(test_path)
             .expect("Unable to completely delete calibration directory, exiting");
         process::exit(ERROR_EXIT);

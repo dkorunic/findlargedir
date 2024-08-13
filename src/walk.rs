@@ -1,20 +1,20 @@
 use std::collections::HashSet;
-use std::fs::Metadata;
 use std::fs::read_dir;
+use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
 use ansi_term::Colour::{Green, Red, Yellow};
 use anyhow::{Context, Error};
 use fs_err as fs;
-use human_bytes::human_bytes;
 use human_format::Formatter;
+use indicatif::HumanBytes;
 use jwalk::{DirEntry, Parallelism, WalkDir};
 
 use crate::args;
@@ -241,7 +241,7 @@ fn print_offender(
     println!(
         "Found directory {} with inode size {} and {}{} files",
         full_path.display(),
-        human_bytes(size as f64),
+        HumanBytes(size),
         if accurate { "" } else { "approx " },
         if red_alert {
             Red.paint(human_files)

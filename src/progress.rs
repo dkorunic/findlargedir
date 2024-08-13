@@ -21,8 +21,8 @@ const PROGRESS_TICK: u64 = 80;
 /// let spinner = new_spinner("Loading...");
 /// ```
 pub fn new_spinner<S>(msg: S) -> ProgressBar
-    where
-        S: Into<String>,
+where
+    S: Into<String>,
 {
     let pb = ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(PROGRESS_TICK));

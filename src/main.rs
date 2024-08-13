@@ -2,16 +2,16 @@
 
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Error, Result};
 use cfg_if::cfg_if;
 use clap::Parser;
-use fdlimit::{Outcome, raise_fd_limit};
+use fdlimit::{raise_fd_limit, Outcome};
 use fs_err as fs;
-use humantime::Duration as HumanDuration;
+use indicatif::HumanDuration;
 use tempfile::TempDir;
 
 mod args;
@@ -128,7 +128,7 @@ fn main() -> Result<(), Error> {
         println!(
             "Scanning path {} completed. Time elapsed: {}",
             path.display(),
-            HumanDuration::from(start.elapsed())
+            HumanDuration(start.elapsed())
         );
     }
 
