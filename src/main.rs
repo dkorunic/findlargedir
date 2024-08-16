@@ -1,11 +1,11 @@
 #![warn(clippy::all, clippy::pedantic)]
 
-use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 
+use ahash::AHashSet;
 use anyhow::{Context, Error, Result};
 use cfg_if::cfg_if;
 use clap::Parser;
@@ -63,7 +63,7 @@ fn main() -> Result<(), Error> {
     }
 
     // Search only unique paths
-    let mut visited_paths = HashSet::with_capacity(args.path.len());
+    let mut visited_paths = AHashSet::with_capacity(args.path.len());
 
     for path in args.path.clone() {
         // Keep order of provided path arguments, but skip already visited paths

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs::read_dir;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
@@ -10,6 +9,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
+use ahash::AHashSet;
 use ansi_term::Colour::{Green, Red, Yellow};
 use anyhow::{Context, Error};
 use fs_err as fs;
@@ -64,7 +64,7 @@ pub fn parallel_search(
     args: Arc<args::Args>,
 ) -> Result<(), Error> {
     // Create hash set for path exclusions
-    let skip_path = args.skip_path.iter().cloned().collect::<HashSet<_>>();
+    let skip_path = args.skip_path.iter().cloned().collect::<AHashSet<_>>();
 
     // Thread pool for status reporting and filesystem walk
     let pool = Arc::new(
@@ -150,7 +150,7 @@ fn process_dir_entry<E>(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
     dir_entry_result: &mut Result<DirEntry<((), ())>, E>,
-    skip_path: &HashSet<PathBuf>,
+    skip_path: &AHashSet<PathBuf>,
     args: &Arc<args::Args>,
     dir_count_walk: &Arc<AtomicU64>,
 ) {
