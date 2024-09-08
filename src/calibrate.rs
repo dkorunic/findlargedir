@@ -74,7 +74,7 @@ pub fn get_inode_ratio(
     // Mass create files; filenames are short to get minimal size to inode ratio
     pool.install(|| {
         (0..args.calibration_count).into_par_iter().for_each(|i| {
-            if !shutdown.load(Ordering::SeqCst) {
+            if !shutdown.load(Ordering::Acquire) {
                 File::create(test_path.join(i.to_string())).expect("Unable to create files");
             }
         });
@@ -83,7 +83,7 @@ pub fn get_inode_ratio(
     pb.finish_with_message("Done.");
 
     // Terminate on received interrupt signal
-    if shutdown.load(Ordering::SeqCst) {
+    if shutdown.load(Ordering::Acquire) {
         println!("Requested program exit, stopping and deleting temporary files...",);
         ensure_removed(test_path)
             .expect("Unable to completely delete calibration directory, exiting");

@@ -85,7 +85,7 @@ pub fn parallel_search(
         pool.spawn(move || loop {
             sleep(Duration::from_secs(sleep_delay));
 
-            let count = dir_count_status.load(Ordering::SeqCst);
+            let count = dir_count_status.load(Ordering::Acquire);
             println!(
                 "Processed {} directories so far, next update in {} seconds",
                 Green.paint(count.to_string()),
@@ -104,7 +104,7 @@ pub fn parallel_search(
         })
         .process_read_dir(move |_, _, (), children| {
             // Terminate on received interrupt signal
-            if shutdown.load(Ordering::SeqCst) {
+            if shutdown.load(Ordering::Acquire) {
                 println!("Requested program exit, stopping scan...");
                 process::exit(ERROR_EXIT);
             }
@@ -163,7 +163,7 @@ fn process_dir_entry<E>(
         if dir_entry.file_type.is_dir() {
             if let Some(full_path) = dir_entry.read_children_path.as_ref() {
                 // Visited directory count
-                dir_count_walk.fetch_add(1, Ordering::SeqCst);
+                dir_count_walk.fetch_add(1, Ordering::AcqRel);
 
                 // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
                 if !skip_path.is_empty() && skip_path.contains(&full_path.to_path_buf()) {
