@@ -166,7 +166,9 @@ fn process_dir_entry<E>(
                 dir_count_walk.fetch_add(1, Ordering::AcqRel);
 
                 // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
-                if !skip_path.is_empty() && skip_path.contains(&full_path.to_path_buf()) {
+                if !skip_path.is_empty()
+                    && skip_path.contains(&full_path.to_path_buf())
+                {
                     println!(
                         "Skipping further scan at {} as requested",
                         full_path.display()
@@ -181,7 +183,9 @@ fn process_dir_entry<E>(
                     // If `one_filesystem` flag has been set and if directory is not residing
                     // on the same device as top search path, print warning and abort deeper
                     // scanning
-                    if args.one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev()) {
+                    if args.one_filesystem
+                        && (dir_entry_metadata.dev() != path_metadata.dev())
+                    {
                         println!(
                             "Identified filesystem boundary at {}, skipping...",
                             full_path.display()
@@ -197,10 +201,22 @@ fn process_dir_entry<E>(
 
                     // Print count warnings if necessary
                     if approx_files > args.blacklist_threshold {
-                        print_offender(full_path, size, approx_files, args.accurate, true);
+                        print_offender(
+                            full_path,
+                            size,
+                            approx_files,
+                            args.accurate,
+                            true,
+                        );
                         dir_entry.read_children_path = None;
                     } else if approx_files > args.alert_threshold {
-                        print_offender(full_path, size, approx_files, args.accurate, false);
+                        print_offender(
+                            full_path,
+                            size,
+                            approx_files,
+                            args.accurate,
+                            false,
+                        );
                     }
                 }
             }

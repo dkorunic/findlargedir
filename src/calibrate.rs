@@ -58,10 +58,7 @@ pub fn get_inode_ratio(
     shutdown: &Arc<AtomicBool>,
     args: &Arc<args::Args>,
 ) -> Result<u64, Error> {
-    println!(
-        "Starting test directory calibration in {}",
-        test_path.display(),
-    );
+    println!("Starting test directory calibration in {}", test_path.display(),);
 
     // Thread pool for mass file creation
     let pool = rayon::ThreadPoolBuilder::new()
@@ -75,7 +72,8 @@ pub fn get_inode_ratio(
     pool.install(|| {
         (0..args.calibration_count).into_par_iter().for_each(|i| {
             if !shutdown.load(Ordering::Acquire) {
-                File::create(test_path.join(i.to_string())).expect("Unable to create files");
+                File::create(test_path.join(i.to_string()))
+                    .expect("Unable to create files");
             }
         });
     });
@@ -84,14 +82,20 @@ pub fn get_inode_ratio(
 
     // Terminate on received interrupt signal
     if shutdown.load(Ordering::Acquire) {
-        println!("Requested program exit, stopping and deleting temporary files...",);
-        ensure_removed(test_path)
-            .expect("Unable to completely delete calibration directory, exiting");
+        println!(
+            "Requested program exit, stopping and deleting temporary files...",
+        );
+        ensure_removed(test_path).expect(
+            "Unable to completely delete calibration directory, exiting",
+        );
         process::exit(ERROR_EXIT);
     }
 
-    let size_inode_ratio = fs::metadata(test_path)?.size() / args.calibration_count;
-    println!("Calibration done. Calculated size-to-inode ratio: {size_inode_ratio}");
+    let size_inode_ratio =
+        fs::metadata(test_path)?.size() / args.calibration_count;
+    println!(
+        "Calibration done. Calculated size-to-inode ratio: {size_inode_ratio}"
+    );
 
     Ok(size_inode_ratio)
 }

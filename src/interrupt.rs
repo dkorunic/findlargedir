@@ -15,7 +15,9 @@ use anyhow::{Context, Error};
 ///
 /// # Errors
 /// Returns an error if the Ctrl-C handler cannot be set, encapsulated in an `anyhow::Error`.
-pub fn setup_interrupt_handler(shutdown: Arc<AtomicBool>) -> Result<(), Error> {
+pub fn setup_interrupt_handler(
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), Error> {
     ctrlc::set_handler(move || {
         shutdown.store(true, Ordering::Release);
     })

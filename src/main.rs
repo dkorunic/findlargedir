@@ -52,10 +52,7 @@ fn main() -> Result<(), Error> {
     let shutdown_scan = shutdown.clone();
     interrupt::setup_interrupt_handler(shutdown)?;
 
-    println!(
-        "Using {} threads for calibration and scanning",
-        args.threads
-    );
+    println!("Using {} threads for calibration and scanning", args.threads);
 
     // Attempt to raise FD limit
     if let Ok(Outcome::LimitRaised { to: x, .. }) = raise_fd_limit() {
@@ -86,7 +83,8 @@ fn main() -> Result<(), Error> {
         } else if let Some(ref user_path) = args.calibration_path {
             // User has specified his calibration directory so attempt to check if it resides on
             // the same device
-            if fs::metadata(user_path.as_path())?.dev() != path_metadata.dev() {
+            if fs::metadata(user_path.as_path())?.dev() != path_metadata.dev()
+            {
                 println!(
                     "Oops, test directory resides on a different device than path {}, results are possibly unreliable!",
                     path.display()
@@ -94,26 +92,28 @@ fn main() -> Result<(), Error> {
             }
 
             // Prepare temporary calibration directory in user path
-            let tmp_dir = Arc::new(
-                TempDir::new_in(user_path.as_path())
-                    .context("Unable to setup/create calibration test directory")?,
-            );
+            let tmp_dir =
+                Arc::new(TempDir::new_in(user_path.as_path()).context(
+                    "Unable to setup/create calibration test directory",
+                )?);
 
             calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, &args)
                 .context("Unable to calibrate inode to size ratio")?
         } else {
             // Prepare temporary calibration directory in root of the search path
-            let tmp_dir = Arc::new(
-                TempDir::new_in(path.as_path())
-                    .context("Unable to setup/create calibration test directory")?,
-            );
+            let tmp_dir = Arc::new(TempDir::new_in(path.as_path()).context(
+                "Unable to setup/create calibration test directory",
+            )?);
 
             calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, &args)
                 .context("Unable to calibrate inode to size ratio")?
         };
 
         let start = Instant::now();
-        let pb = progress::new_spinner(format!("Scanning path {} in progress...", path.display()));
+        let pb = progress::new_spinner(format!(
+            "Scanning path {} in progress...",
+            path.display()
+        ));
 
         walk::parallel_search(
             &path,

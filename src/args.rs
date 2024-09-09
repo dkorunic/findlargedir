@@ -58,7 +58,9 @@ pub struct Args {
 fn parse_threads(x: &str) -> Result<usize, Error> {
     match x.parse::<usize>() {
         Ok(v) => match v {
-            v if !(2..=65535).contains(&v) => Err(anyhow!("threads should be in (2..65536) range")),
+            v if !(2..=65535).contains(&v) => {
+                Err(anyhow!("threads should be in (2..65536) range"))
+            }
             v => Ok(v),
         },
         Err(e) => Err(Error::from(e)),

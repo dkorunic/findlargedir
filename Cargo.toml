@@ -36,8 +36,11 @@ tikv-jemallocator = "0.6.0"
 tikv-jemallocator = "0.6.0"
 
 [profile.release]
-lto = "fat"
-strip = true
+opt-level = 3
+debug = "none"
+strip = "symbols"
+debug-assertions = false
 overflow-checks = true
-codegen-units = 1
+lto = "fat"
 panic = "abort"
+codegen-units = 1
