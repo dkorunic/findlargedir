@@ -72,8 +72,21 @@ pub fn get_inode_ratio(
     pool.install(|| {
         (0..args.calibration_count).into_par_iter().for_each(|i| {
             if !shutdown.load(Ordering::Acquire) {
-                File::create(test_path.join(i.to_string()))
-                    .expect("Unable to create files");
+                match File::create(test_path.join(i.to_string())) {
+                    Ok(_) => (),
+                    Err(e) => {
+                        // Stop and clear ProgressBar
+                        pb.finish_and_clear();
+
+                        println!("Errors encountered during calibration: {e}");
+
+                        // Attempt to clean up TempDir, ignoring all errors
+                        _ = ensure_removed(test_path);
+
+                        println!("Fatal program error, exiting");
+                        process::exit(ERROR_EXIT);
+                    }
+                }
             }
         });
     });
