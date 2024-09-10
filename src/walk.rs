@@ -106,6 +106,7 @@ pub fn parallel_search(
             // Terminate on received interrupt signal
             if shutdown.load(Ordering::Acquire) {
                 println!("Requested program exit, stopping scan...");
+
                 process::exit(ERROR_EXIT);
             }
 
@@ -157,6 +158,7 @@ fn process_dir_entry<E>(
     if let Ok(dir_entry) = dir_entry_result {
         if let Some(ref e) = dir_entry.read_children_error {
             println!("Fatal program error, exiting: {e}");
+
             process::exit(ERROR_EXIT)
         }
 

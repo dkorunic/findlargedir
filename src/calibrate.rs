@@ -69,29 +69,27 @@ pub fn get_inode_ratio(
     let pb = progress::new_spinner("Creating test files in progress...");
 
     // Mass create files; filenames are short to get minimal size to inode ratio
-    pool.install(|| {
-        (0..args.calibration_count).into_par_iter().for_each(|i| {
+    let res: Result<(), Error> = pool.install(|| {
+        (0..args.calibration_count).into_par_iter().try_for_each(|i| {
             if !shutdown.load(Ordering::Acquire) {
-                match File::create(test_path.join(i.to_string())) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        // Stop and clear ProgressBar
-                        pb.finish_and_clear();
-
-                        println!("Errors encountered during calibration: {e}");
-
-                        // Attempt to clean up TempDir, ignoring all errors
-                        _ = ensure_removed(test_path);
-
-                        println!("Fatal program error, exiting");
-                        process::exit(ERROR_EXIT);
-                    }
-                }
+                File::create(test_path.join(i.to_string()))?;
             }
-        });
+
+            Ok(())
+        })
     });
 
     pb.finish_with_message("Done.");
+
+    // Check for calibration errors
+    if let Err(e) = res {
+        println!("Fatal program error, exiting: {e}");
+
+        // TempDir cleanup will most likely fail as well
+        _ = ensure_removed(test_path);
+
+        process::exit(ERROR_EXIT);
+    }
 
     // Terminate on received interrupt signal
     if shutdown.load(Ordering::Acquire) {
@@ -101,6 +99,7 @@ pub fn get_inode_ratio(
         ensure_removed(test_path).expect(
             "Unable to completely delete calibration directory, exiting",
         );
+
         process::exit(ERROR_EXIT);
     }
 
