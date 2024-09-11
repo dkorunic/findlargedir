@@ -44,7 +44,6 @@ jobs:
             linux-amd64,
             linux-arm32,
             linux-arm64,
-            linux-mips64,
             linux-riscv64,
             linux-powerpc64,
             linux-s390,
@@ -68,11 +67,6 @@ jobs:
             rust: stable
             target: aarch64-unknown-linux-musl
             experimental: false
-          - build: linux-mips64
-            os: ubuntu-latest
-            rust: stable
-            target: mips64-unknown-linux-gnuabi64
-            experimental: true
           - build: linux-riscv64
             os: ubuntu-latest
             rust: stable
