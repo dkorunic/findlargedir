@@ -1,13 +1,20 @@
 use std::path::PathBuf;
 use std::thread;
 
+use anstyle::AnsiColor;
 use anyhow::{anyhow, Error};
-use clap::builder::ValueParser;
+use clap::builder::{styling::Styles, ValueParser};
 use clap::Parser;
 use clap::ValueHint;
 
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Yellow.on_default())
+    .usage(AnsiColor::Green.on_default())
+    .literal(AnsiColor::Green.on_default())
+    .placeholder(AnsiColor::Green.on_default());
+
 #[derive(Parser, Default, Debug, Clone)]
-#[clap(author, version, about, long_about = None)]
+#[clap(author, version, about, long_about = None, styles=STYLES)]
 pub struct Args {
     /// Perform accurate directory entry counting
     #[clap(short = 'a', long, action = clap::ArgAction::Set, default_value_t = false)]
