@@ -72,7 +72,8 @@ fn main() -> Result<(), Error> {
         println!("Started analysis for path {}", path.display());
 
         // Retrieve Unix metadata for top search path
-        let path_metadata = fs::metadata(&path)?;
+        let path_metadata = fs::metadata(&path)
+            .context("Unable to retrieve top search path metadata")?;
 
         // Directory inode size to number of entries ratio is either manually provided in
         // `args.size_inode_ratio` or determined from manually provided calibration path
@@ -83,7 +84,9 @@ fn main() -> Result<(), Error> {
         } else if let Some(ref user_path) = args.calibration_path {
             // User has specified his calibration directory so attempt to check if it resides on
             // the same device
-            if fs::metadata(user_path.as_path())?.dev() != path_metadata.dev()
+            if fs::metadata(user_path.as_path()).context(
+                "Unable to retrieve user-specified calibration path metadata",
+            )?.dev() != path_metadata.dev()
             {
                 println!(
                     "Oops, test directory resides on a different device than path {}, results are possibly unreliable!",
@@ -121,7 +124,8 @@ fn main() -> Result<(), Error> {
             size_inode_ratio,
             shutdown_scan.clone(),
             args.clone(),
-        )?;
+        )
+        .context("Unable to perform parallel walk on path")?;
 
         pb.finish_with_message("Done.");
 

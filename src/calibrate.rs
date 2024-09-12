@@ -72,7 +72,8 @@ pub fn get_inode_ratio(
     let res: Result<(), Error> = pool.install(|| {
         (0..args.calibration_count).into_par_iter().try_for_each(|i| {
             if !shutdown.load(Ordering::Acquire) {
-                File::create(test_path.join(i.to_string()))?;
+                File::create(test_path.join(i.to_string()))
+                    .context("Unable to create test file")?;
             }
 
             Ok(())
@@ -103,8 +104,10 @@ pub fn get_inode_ratio(
         process::exit(ERROR_EXIT);
     }
 
-    let size_inode_ratio =
-        fs::metadata(test_path)?.size() / args.calibration_count;
+    let size_inode_ratio = fs::metadata(test_path)
+        .context("Unable to retrieve calibration directory metadata")?
+        .size()
+        / args.calibration_count;
     println!(
         "Calibration done. Calculated size-to-inode ratio: {size_inode_ratio}"
     );
