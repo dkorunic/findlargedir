@@ -73,7 +73,7 @@ fn main() -> Result<(), Error> {
 
         // Retrieve Unix metadata for top search path
         let path_metadata = fs::metadata(&path)
-            .context("Unable to retrieve top search path metadata")?;
+            .context("Unable to retrieve top search directory metadata")?;
 
         // Directory inode size to number of entries ratio is either manually provided in
         // `args.size_inode_ratio` or determined from manually provided calibration path
@@ -85,7 +85,7 @@ fn main() -> Result<(), Error> {
             // User has specified his calibration directory so attempt to check if it resides on
             // the same device
             if fs::metadata(user_path.as_path()).context(
-                "Unable to retrieve user-specified calibration path metadata",
+                "Unable to retrieve user-specified calibration directory metadata",
             )?.dev() != path_metadata.dev()
             {
                 println!(
