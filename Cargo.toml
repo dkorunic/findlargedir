@@ -14,9 +14,9 @@ edition = "2021"
 jwalk = "0.8.1"
 rayon = "1.10.0"
 tempfile = "3.12.0"
-anyhow = "1.0.88"
+anyhow = "1.0.89"
 human_format = "1.1.0"
-clap = { version = "4.5.17", features = ["derive"] }
+clap = { version = "4.5.17", features = ["derive", "unicode", "wrap_help"] }
 ctrlc = { version = "3.4.5", features = ["termination"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
