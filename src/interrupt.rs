@@ -16,13 +16,16 @@ use signal_hook::flag::register;
 /// Returns `Ok(())` if the handler is successfully set, or an `Error` if any issues occur during setup.
 ///
 /// # Errors
-/// Returns an error if the Ctrl-C handler cannot be set, encapsulated in an `anyhow::Error`.
+/// Returns an error if the signal handler cannot be set, encapsulated in an `anyhow::Error`.
 pub fn setup_interrupt_handler(
     shutdown: &Arc<AtomicBool>,
 ) -> Result<(), Error> {
     for sig in TERM_SIGNALS {
-        register(*sig, shutdown.clone())
-            .context("Unable to set {sig} handler")?;
+        let name =
+            signal_hook::low_level::signal_name(*sig).unwrap_or_default();
+        register(*sig, shutdown.clone()).with_context(|| {
+            format!("Unable to register signal handler for {name}/{sig}")
+        })?;
     }
 
     Ok(())
