@@ -104,7 +104,7 @@ pub fn parallel_search(
         })
         .process_read_dir(move |_, _, (), children| {
             // Terminate on received interrupt signal
-            if shutdown.load(Ordering::Acquire) {
+            if shutdown.load(Ordering::Relaxed) {
                 println!("Requested program exit, stopping scan...");
 
                 process::exit(ERROR_EXIT);

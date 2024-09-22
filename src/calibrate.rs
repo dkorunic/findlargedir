@@ -71,7 +71,7 @@ pub fn get_inode_ratio(
     // Mass create files; filenames are short to get minimal size to inode ratio
     let res: Result<(), Error> = pool.install(|| {
         (0..args.calibration_count).into_par_iter().try_for_each(|i| {
-            if !shutdown.load(Ordering::Acquire) {
+            if !shutdown.load(Ordering::Relaxed) {
                 File::create(test_path.join(i.to_string()))
                     .context("Unable to create test file")?;
             }
@@ -93,7 +93,7 @@ pub fn get_inode_ratio(
     }
 
     // Terminate on received interrupt signal
-    if shutdown.load(Ordering::Acquire) {
+    if shutdown.load(Ordering::Relaxed) {
         println!(
             "Requested program exit, stopping and deleting temporary files...",
         );

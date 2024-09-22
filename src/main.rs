@@ -50,7 +50,7 @@ fn main() -> Result<(), Error> {
     // Setup SIGINT, SIGTERM and SIGHUP signal handler that will cause calibration to stop
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_scan = shutdown.clone();
-    interrupt::setup_interrupt_handler(shutdown)?;
+    interrupt::setup_interrupt_handler(&shutdown)?;
 
     println!("Using {} threads for calibration and scanning", args.threads);
 
