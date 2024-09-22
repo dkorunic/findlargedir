@@ -47,7 +47,7 @@ cfg_if! {
 fn main() -> Result<(), Error> {
     let args = Arc::new(args::Args::parse());
 
-    // Setup SIGINT, SIGTERM and SIGHUP signal handler that will cause calibration to stop
+    // Setup termination signal (SIGINT, SIGTERM and SIGQUIT) handlers that will cause program to stop
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_scan = shutdown.clone();
     interrupt::setup_interrupt_handler(&shutdown)?;
