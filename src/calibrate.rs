@@ -13,7 +13,7 @@ use rm_rf::ensure_removed;
 use crate::{args, progress};
 
 /// Default number of files to create in the calibration directory
-pub const DEFAULT_TEST_COUNT: u64 = 100_000;
+pub const DEFAULT_TEST_COUNT: u64 = 100;
 
 /// Default exit error code in case of premature termination
 const ERROR_EXIT: i32 = 1;
