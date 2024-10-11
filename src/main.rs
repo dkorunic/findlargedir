@@ -49,7 +49,7 @@ fn main() -> Result<(), Error> {
 
     // Setup termination signal (SIGINT, SIGTERM and SIGQUIT) handlers that will cause program to stop
     let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_scan = shutdown.clone();
+    let shutdown_walk = shutdown.clone();
     interrupt::setup_interrupt_handler(&shutdown)?;
 
     println!("Using {} threads for calibration and scanning", args.threads);
@@ -100,7 +100,7 @@ fn main() -> Result<(), Error> {
                     "Unable to setup/create calibration test directory",
                 )?);
 
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, &args)
+            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_walk, &args)
                 .context("Unable to calibrate inode to size ratio")?
         } else {
             // Prepare temporary calibration directory in root of the search path
@@ -108,7 +108,7 @@ fn main() -> Result<(), Error> {
                 "Unable to setup/create calibration test directory",
             )?);
 
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_scan, &args)
+            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_walk, &args)
                 .context("Unable to calibrate inode to size ratio")?
         };
 
@@ -120,12 +120,11 @@ fn main() -> Result<(), Error> {
 
         walk::parallel_search(
             &path,
-            path_metadata,
+            &path_metadata,
             size_inode_ratio,
-            shutdown_scan.clone(),
-            args.clone(),
-        )
-        .context("Unable to perform parallel walk on path")?;
+            &shutdown_walk,
+            &args,
+        );
 
         pb.finish_with_message("Done.");
 

@@ -9,15 +9,13 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
+use crate::args::Args;
 use ahash::AHashSet;
 use ansi_term::Colour::{Green, Red, Yellow};
-use anyhow::{Context, Error};
 use fs_err as fs;
 use human_format::Formatter;
+use ignore::{DirEntry, WalkBuilder, WalkState};
 use indicatif::HumanBytes;
-use jwalk::{DirEntry, Parallelism, WalkDir};
-
-use crate::args;
 
 /// Default number of files in a folder to cause alert
 pub const ALERT_COUNT: u64 = 10_000;
@@ -58,20 +56,19 @@ pub const STATUS_SECONDS: u64 = 20;
 /// - `Result<(), Error>`: Ok if the scan completes successfully, or an error wrapped in `Err` otherwise.
 pub fn parallel_search(
     path: &PathBuf,
-    path_metadata: Metadata,
+    path_metadata: &Metadata,
     size_inode_ratio: u64,
-    shutdown: Arc<AtomicBool>,
-    args: Arc<args::Args>,
-) -> Result<(), Error> {
+    shutdown_walk: &Arc<AtomicBool>,
+    args: &Arc<Args>,
+) {
     // Create hash set for path exclusions
     let skip_path = args.skip_path.iter().cloned().collect::<AHashSet<_>>();
 
     // Thread pool for status reporting and filesystem walk
     let pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
-            .num_threads(args.threads)
             .build()
-            .context("Unable to spawn calibration thread pool")?,
+            .expect("Unable to spawn calibration thread pool"),
     );
 
     // Processed directory count
@@ -79,13 +76,13 @@ pub fn parallel_search(
 
     // Status update thread
     if args.updates > 0 {
-        let dir_count_status = dir_count.clone();
+        let dir_count = dir_count.clone();
         let sleep_delay = args.updates;
 
         pool.spawn(move || loop {
             sleep(Duration::from_secs(sleep_delay));
 
-            let count = dir_count_status.load(Ordering::Acquire);
+            let count = dir_count.load(Ordering::Acquire);
             println!(
                 "Processed {} directories so far, next update in {} seconds",
                 Green.paint(count.to_string()),
@@ -95,35 +92,35 @@ pub fn parallel_search(
     }
 
     // Perform target filesystem walking
-    for _ in WalkDir::new(path)
-        .skip_hidden(false)
-        .sort(false)
-        .parallelism(Parallelism::RayonExistingPool {
-            pool,
-            busy_timeout: None,
-        })
-        .process_read_dir(move |_, _, (), children| {
-            // Terminate on received interrupt signal
-            if shutdown.load(Ordering::Relaxed) {
-                println!("Requested program exit, stopping scan...");
+    WalkBuilder::new(path)
+        .hidden(false)
+        .standard_filters(false)
+        .threads(args.threads)
+        .build_parallel()
+        .run(|| {
+            Box::new({
+                let skip_path = &skip_path;
+                let dir_count = &dir_count;
 
-                process::exit(ERROR_EXIT);
-            }
+                move |dir_entry_result| {
+                    // Terminate on received interrupt signal
+                    if shutdown_walk.load(Ordering::Relaxed) {
+                        println!("Requested program exit, stopping scan...");
 
-            for dir_entry_result in &mut *children {
-                process_dir_entry(
-                    &path_metadata,
-                    size_inode_ratio,
-                    dir_entry_result,
-                    &skip_path,
-                    &args,
-                    &dir_count,
-                );
-            }
-        })
-    {}
+                        process::exit(ERROR_EXIT);
+                    }
 
-    Ok(())
+                    process_dir_entry(
+                        path_metadata,
+                        size_inode_ratio,
+                        dir_entry_result,
+                        skip_path,
+                        args,
+                        dir_count,
+                    )
+                }
+            })
+        });
 }
 
 /// Executes a parallel search of directories starting from a specified path.
@@ -147,83 +144,84 @@ pub fn parallel_search(
 /// # Errors
 /// This function can return an error if there is a failure in setting up the thread pool or during
 /// the directory walking process.
-fn process_dir_entry<E>(
+fn process_dir_entry(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
-    dir_entry_result: &mut Result<DirEntry<((), ())>, E>,
+    dir_entry_result: Result<DirEntry, ignore::Error>,
     skip_path: &AHashSet<PathBuf>,
-    args: &Arc<args::Args>,
-    dir_count_walk: &Arc<AtomicU64>,
-) {
+    args: &Arc<Args>,
+    dir_count: &Arc<AtomicU64>,
+) -> WalkState {
     if let Ok(dir_entry) = dir_entry_result {
-        if let Some(ref e) = dir_entry.read_children_error {
-            println!("Fatal program error, exiting: {e}");
+        if let Some(dir_entry_type) = dir_entry.file_type() {
+            if !dir_entry_type.is_dir() {
+                return WalkState::Continue;
+            }
 
-            process::exit(ERROR_EXIT)
-        }
+            let full_path = dir_entry.path();
 
-        if dir_entry.file_type.is_dir() {
-            if let Some(full_path) = dir_entry.read_children_path.as_ref() {
-                // Visited directory count
-                dir_count_walk.fetch_add(1, Ordering::AcqRel);
+            // Visited directory count
+            dir_count.fetch_add(1, Ordering::AcqRel);
 
-                // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
-                if !skip_path.is_empty()
-                    && skip_path.contains(&full_path.to_path_buf())
+            // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
+            if !skip_path.is_empty()
+                && skip_path.contains(&full_path.to_path_buf())
+            {
+                println!(
+                    "Skipping further scan at {} as requested",
+                    full_path.display()
+                );
+
+                return WalkState::Skip;
+            }
+
+            // Retrieve Unix metadata for a given directory
+            if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
+                // If `one_filesystem` flag has been set and if directory is not residing
+                // on the same device as top search path, print warning and abort deeper
+                // scanning
+                if args.one_filesystem
+                    && (dir_entry_metadata.dev() != path_metadata.dev())
                 {
                     println!(
-                        "Skipping further scan at {} as requested",
+                        "Identified filesystem boundary at {}, skipping...",
                         full_path.display()
                     );
 
-                    dir_entry.read_children_path = None;
-                    return;
+                    return WalkState::Skip;
                 }
 
-                // Retrieve Unix metadata for a given directory
-                if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
-                    // If `one_filesystem` flag has been set and if directory is not residing
-                    // on the same device as top search path, print warning and abort deeper
-                    // scanning
-                    if args.one_filesystem
-                        && (dir_entry_metadata.dev() != path_metadata.dev())
-                    {
-                        println!(
-                            "Identified filesystem boundary at {}, skipping...",
-                            full_path.display()
-                        );
-                        dir_entry.read_children_path = None;
+                // Identify size and calculate approximate directory entry count
+                let size = dir_entry_metadata.size();
+                let approx_files = size / size_inode_ratio;
 
-                        return;
-                    }
+                // Print count warnings if necessary
+                if approx_files > args.blacklist_threshold {
+                    print_offender(
+                        full_path,
+                        size,
+                        approx_files,
+                        args.accurate,
+                        true,
+                    );
 
-                    // Identify size and calculate approximate directory entry count
-                    let size = dir_entry_metadata.size();
-                    let approx_files = size / size_inode_ratio;
+                    return WalkState::Skip;
+                } else if approx_files > args.alert_threshold {
+                    print_offender(
+                        full_path,
+                        size,
+                        approx_files,
+                        args.accurate,
+                        false,
+                    );
 
-                    // Print count warnings if necessary
-                    if approx_files > args.blacklist_threshold {
-                        print_offender(
-                            full_path,
-                            size,
-                            approx_files,
-                            args.accurate,
-                            true,
-                        );
-                        dir_entry.read_children_path = None;
-                    } else if approx_files > args.alert_threshold {
-                        print_offender(
-                            full_path,
-                            size,
-                            approx_files,
-                            args.accurate,
-                            false,
-                        );
-                    }
+                    return WalkState::Continue;
                 }
             }
         }
     }
+
+    WalkState::Continue
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -239,7 +237,7 @@ fn process_dir_entry<E>(
 /// * `accurate` - A boolean flag indicating whether the size estimation is considered accurate.
 /// * `is_blacklisted` - A boolean flag indicating whether the directory exceeds the blacklist threshold.
 fn print_offender(
-    full_path: &Arc<Path>,
+    full_path: &Path,
     size: u64,
     approx_files: u64,
     accurate: bool,

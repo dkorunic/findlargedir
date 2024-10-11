@@ -11,7 +11,6 @@ exclude = [".gitignore"]
 edition = "2021"
 
 [dependencies]
-jwalk = "0.8.1"
 rayon = "1.10.0"
 tempfile = "3.13.0"
 anyhow = "1.0.89"
@@ -26,6 +25,7 @@ fdlimit = "0.3.0"
 ahash = "0.8.11"
 anstyle = "1.0.8"
 signal-hook = "0.3.17"
+ignore = "0.4.23"
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 tikv-jemallocator = "0.6.0"
