@@ -14,7 +14,7 @@ use ahash::AHashSet;
 use ansi_term::Colour::{Green, Red, Yellow};
 use fs_err as fs;
 use human_format::Formatter;
-use ignore::{DirEntry, WalkBuilder, WalkState};
+use ignore::{DirEntry, Error, WalkBuilder, WalkState};
 use indicatif::HumanBytes;
 
 /// Default number of files in a folder to cause alert
@@ -64,7 +64,7 @@ pub fn parallel_search(
     args: &Arc<Args>,
 ) {
     // Create hash set for path exclusions
-    let skip_path = args.skip_path.iter().cloned().collect::<AHashSet<_>>();
+    let skip_path = &args.skip_path.iter().cloned().collect::<AHashSet<_>>();
 
     // Thread pool for status reporting and filesystem walk
     let pool = Arc::new(
@@ -75,7 +75,7 @@ pub fn parallel_search(
     );
 
     // Processed directory count
-    let dir_count = Arc::new(AtomicU64::new(0));
+    let dir_count = &Arc::new(AtomicU64::new(0));
 
     // Status update thread
     if args.updates > 0 {
@@ -102,9 +102,6 @@ pub fn parallel_search(
         .build_parallel()
         .run(|| {
             Box::new({
-                let skip_path = &skip_path;
-                let dir_count = &dir_count;
-
                 move |dir_entry_result| {
                     // Terminate on received interrupt signal
                     if shutdown_walk.load(Ordering::Relaxed) {
@@ -116,7 +113,7 @@ pub fn parallel_search(
                     process_dir_entry(
                         path_metadata,
                         size_inode_ratio,
-                        dir_entry_result,
+                        &dir_entry_result,
                         skip_path,
                         args,
                         dir_count,
@@ -151,7 +148,7 @@ pub fn parallel_search(
 /// # Types
 /// * `path_metadata` - `&Metadata`
 /// * `size_inode_ratio` - `u64`
-/// * `dir_entry_result` - `Result<DirEntry, ignore::Error>`
+/// * `dir_entry_result` - `&Result<DirEntry, ignore::Error>`
 /// * `skip_path` - `&AHashSet<PathBuf>`
 /// * `args` - `&Arc<Args>`
 /// * `dir_count` - `&Arc<AtomicU64>`
@@ -159,7 +156,7 @@ pub fn parallel_search(
 fn process_dir_entry(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
-    dir_entry_result: Result<DirEntry, ignore::Error>,
+    dir_entry_result: &Result<DirEntry, Error>,
     skip_path: &AHashSet<PathBuf>,
     args: &Arc<Args>,
     dir_count: &Arc<AtomicU64>,
