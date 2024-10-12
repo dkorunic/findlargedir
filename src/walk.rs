@@ -30,30 +30,32 @@ const ERROR_EXIT: i32 = 1;
 /// Default status update period in seconds
 pub const STATUS_SECONDS: u64 = 20;
 
-/// Performs a parallel filesystem scan from a specified path using a thread pool.
+/// Perform parallel filesystem search starting from a specified path.
 ///
-/// This function scans directories starting from the given path, processing each directory entry
-/// and updating the status periodically. It checks for a shutdown signal to gracefully stop the scan.
+/// # Arguments
+/// * `path` - The starting path for the filesystem search.
+/// * `path_metadata` - Metadata of the parent directory.
+/// * `size_inode_ratio` - The ratio of size to inode for calculating file count.
+/// * `shutdown_walk` - Atomic boolean flag to signal shutdown of the search.
+/// * `args` - Command-line arguments provided to the program.
 ///
-/// # Parameters:
-/// - `path: &PathBuf`: The root path from where the scan starts.
-/// - `path_metadata: Metadata`: Metadata of the root path for comparison and checks during the scan.
-/// - `size_inode_ratio: u64`: Ratio to estimate file counts in directories based on inode size.
-/// - `shutdown: Arc<AtomicBool>`: Shared flag to signal a shutdown, set by an interrupt handler.
-/// - `args: Arc<args::Args>`: Contains configuration such as thread count, update intervals, and exclusion paths.
+/// # Returns
+/// This function does not return a value but performs a parallel filesystem search based on the provided arguments.
 ///
-/// # Behavior:
-/// - Initializes exclusion paths and sets up a thread pool for directory processing and status updates.
-/// - Checks the `shutdown` flag periodically and exits with `ERROR_EXIT` code if set.
-/// - Processes each directory entry to evaluate conditions like file count thresholds.
-/// - Provides periodic status updates if enabled in `args`.
+/// # Behaviors
+/// This function creates a hash set of paths to exclude from the search based on the provided arguments.
+/// It initializes a thread pool for status reporting and filesystem traversal.
+/// The function spawns a status update thread if the update interval is greater than 0.
+/// It then initiates the filesystem walk using the `WalkBuilder` with specified configurations.
+/// For each directory entry encountered during the walk, it processes the entry using the `process_dir_entry` function.
+/// The search can be terminated if a shutdown signal is received, in which case the program exits with an error code.
 ///
-/// # Error Handling:
-/// - Exits with an error code if unable to create the thread pool.
-/// - Handles errors during directory traversal and metadata access.
-///
-/// # Returns:
-/// - `Result<(), Error>`: Ok if the scan completes successfully, or an error wrapped in `Err` otherwise.
+/// # Types
+/// * `path` - `&PathBuf`: A reference to the starting path for the filesystem search.
+/// * `path_metadata` - `&Metadata`: Metadata of the parent directory.
+/// * `size_inode_ratio` - `u64`: The ratio of size to inode for calculating file count.
+/// * `shutdown_walk` - `&Arc<AtomicBool>`: Atomic boolean flag to signal shutdown of the search.
+/// * `args` - `&Arc<Args>`: Command-line arguments provided to the program.
 pub fn parallel_search(
     path: &PathBuf,
     path_metadata: &Metadata,
@@ -67,6 +69,7 @@ pub fn parallel_search(
     // Thread pool for status reporting and filesystem walk
     let pool = Arc::new(
         rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
             .build()
             .expect("Unable to spawn calibration thread pool"),
     );
@@ -123,27 +126,36 @@ pub fn parallel_search(
         });
 }
 
-/// Executes a parallel search of directories starting from a specified path.
-///
-/// This function initiates a filesystem walk from the given path, processing each directory
-/// in parallel using a thread pool. It handles directory exclusions, periodic status updates,
-/// and can gracefully shutdown upon receiving an interrupt signal.
+/// Processes a directory entry based on specified criteria and arguments.
 ///
 /// # Arguments
-/// * `path` - A reference to the `PathBuf` that specifies the starting point of the search.
-/// * `path_metadata` - Metadata of the initial path, used for comparison in certain conditions.
-/// * `size_inode_ratio` - The ratio used to estimate the number of entries in a directory.
-/// * `shutdown` - An `Arc<AtomicBool>` that signals if the operation should be prematurely terminated.
-/// * `args` - An `Arc` containing the arguments passed to the program, influencing behavior like
-///            thread count, update intervals, and path exclusions.
+/// * `path_metadata` - A reference to the metadata of the current directory.
+/// * `size_inode_ratio` - The ratio used to calculate the approximate number of files in the directory.
+/// * `dir_entry_result` - The result of attempting to read a directory entry.
+/// * `skip_path` - A set of paths to be excluded from scanning.
+/// * `args` - A shared reference to the command-line arguments provided.
+/// * `dir_count` - A shared reference to the atomic counter for visited directories.
 ///
 /// # Returns
-/// A `Result<(), Error>` indicating the outcome of the operation. It returns `Ok(())` if the
-/// search completes successfully or an `Err(Error)` if an error occurs during the setup or execution.
+/// The state of the directory processing, indicating whether to continue, skip, or stop scanning.
 ///
-/// # Errors
-/// This function can return an error if there is a failure in setting up the thread pool or during
-/// the directory walking process.
+/// # Behaviors
+/// - Checks if the directory entry is a directory; if not, continues to the next entry.
+/// - Increments the visited directory count.
+/// - Skips scanning if the directory is in the skip path list.
+/// - Skips scanning if the directory is on a different filesystem and the `one_filesystem` flag is set.
+/// - Calculates the size and approximate file count of the directory entry.
+/// - Prints warnings and potentially marks the directory as an offender based on file count thresholds.
+/// - Returns the appropriate state for further scanning based on the calculated conditions.
+///
+/// # Types
+/// * `path_metadata` - `&Metadata`
+/// * `size_inode_ratio` - `u64`
+/// * `dir_entry_result` - `Result<DirEntry, ignore::Error>`
+/// * `skip_path` - `&AHashSet<PathBuf>`
+/// * `args` - `&Arc<Args>`
+/// * `dir_count` - `&Arc<AtomicU64>`
+/// * Return Type - `WalkState`
 fn process_dir_entry(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
