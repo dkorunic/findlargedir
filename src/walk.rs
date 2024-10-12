@@ -30,39 +30,40 @@ const ERROR_EXIT: i32 = 1;
 /// Default status update period in seconds
 pub const STATUS_SECONDS: u64 = 20;
 
-/// Perform parallel filesystem search starting from a specified path.
+/// Perform a parallel filesystem search based on specified criteria and arguments.
 ///
 /// # Arguments
-/// * `path` - The starting path for the filesystem search.
-/// * `path_metadata` - Metadata of the parent directory.
-/// * `size_inode_ratio` - The ratio of size to inode for calculating file count.
-/// * `shutdown_walk` - Atomic boolean flag to signal shutdown of the search.
-/// * `args` - Command-line arguments provided to the program.
+/// * `path` - A reference to the starting path for the filesystem search.
+/// * `path_metadata` - A reference to the metadata of the starting path.
+/// * `size_inode_ratio` - The ratio used to calculate the approximate number of files in a directory.
+/// * `shutdown_walk` - A shared reference to a boolean flag indicating if the search should be terminated.
+/// * `args` - A shared reference to the command-line arguments provided.
 ///
 /// # Returns
-/// This function does not return a value but performs a parallel filesystem search based on the provided arguments.
+/// The total count of processed directories during the filesystem search.
 ///
 /// # Behaviors
-/// This function creates a hash set of paths to exclude from the search based on the provided arguments.
-/// It initializes a thread pool for status reporting and filesystem traversal.
-/// The function spawns a status update thread if the update interval is greater than 0.
-/// It then initiates the filesystem walk using the `WalkBuilder` with specified configurations.
-/// For each directory entry encountered during the walk, it processes the entry using the `process_dir_entry` function.
-/// The search can be terminated if a shutdown signal is received, in which case the program exits with an error code.
+/// - Creates a hash set of paths to be excluded from scanning.
+/// - Initializes a thread pool for status reporting and filesystem traversal.
+/// - Updates the processed directory count based on the status update interval.
+/// - Initiates the parallel filesystem walk using specified parameters.
+/// - Terminates the search if a shutdown signal is received.
+/// - Processes each directory entry encountered during the search.
 ///
 /// # Types
-/// * `path` - `&PathBuf`: A reference to the starting path for the filesystem search.
-/// * `path_metadata` - `&Metadata`: Metadata of the parent directory.
-/// * `size_inode_ratio` - `u64`: The ratio of size to inode for calculating file count.
-/// * `shutdown_walk` - `&Arc<AtomicBool>`: Atomic boolean flag to signal shutdown of the search.
-/// * `args` - `&Arc<Args>`: Command-line arguments provided to the program.
+/// * `path` - `&PathBuf`
+/// * `path_metadata` - `&Metadata`
+/// * `size_inode_ratio` - `u64`
+/// * `shutdown_walk` - `&Arc<AtomicBool>`
+/// * `args` - `&Arc<Args>`
+/// * Return Type - `u64`
 pub fn parallel_search(
     path: &PathBuf,
     path_metadata: &Metadata,
     size_inode_ratio: u64,
     shutdown_walk: &Arc<AtomicBool>,
     args: &Arc<Args>,
-) {
+) -> u64 {
     // Create hash set for path exclusions
     let skip_path = &args.skip_path.iter().cloned().collect::<AHashSet<_>>();
 
@@ -121,6 +122,8 @@ pub fn parallel_search(
                 }
             })
         });
+
+    dir_count.load(Ordering::Acquire)
 }
 
 /// Processes a directory entry based on specified criteria and arguments.

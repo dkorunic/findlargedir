@@ -118,7 +118,7 @@ fn main() -> Result<(), Error> {
             path.display()
         ));
 
-        walk::parallel_search(
+        let dir_count = walk::parallel_search(
             &path,
             &path_metadata,
             size_inode_ratio,
@@ -129,8 +129,9 @@ fn main() -> Result<(), Error> {
         pb.finish_with_message("Done.");
 
         println!(
-            "Scanning path {} completed. Time elapsed: {}",
+            "Scanning path {} completed. Directories scanned: {}, Time elapsed: {}",
             path.display(),
+            dir_count,
             HumanDuration(start.elapsed())
         );
     }
