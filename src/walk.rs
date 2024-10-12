@@ -71,7 +71,7 @@ pub fn parallel_search(
         rayon::ThreadPoolBuilder::new()
             .num_threads(1)
             .build()
-            .expect("Unable to spawn calibration thread pool"),
+            .expect("Unable to spawn reporting thread pool"),
     );
 
     // Processed directory count
