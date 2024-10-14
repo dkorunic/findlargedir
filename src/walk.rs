@@ -99,6 +99,7 @@ pub fn parallel_search(
     WalkBuilder::new(path)
         .hidden(false)
         .standard_filters(false)
+        .follow_links(args.follow_symlinks)
         .threads(args.threads)
         .build_parallel()
         .run(|| {

@@ -16,6 +16,10 @@ const STYLES: Styles = Styles::styled()
 #[derive(Parser, Default, Debug, Clone)]
 #[clap(author, version, about, long_about = None, styles=STYLES)]
 pub struct Args {
+    /// Follow symlinks
+    #[clap(short = 'f', long, action = clap::ArgAction::Set, default_value_t = false)]
+    pub follow_symlinks: bool,
+
     /// Perform accurate directory entry counting
     #[clap(short = 'a', long, action = clap::ArgAction::Set, default_value_t = false)]
     pub accurate: bool,
