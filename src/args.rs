@@ -41,7 +41,7 @@ pub struct Args {
     pub blacklist_threshold: u64,
 
     /// Number of threads to use when calibrating and scanning
-    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(1))]
+    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2))]
     pub threads: usize,
 
     /// Seconds between status updates, set to 0 to disable
