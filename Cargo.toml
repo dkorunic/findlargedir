@@ -13,7 +13,7 @@ edition = "2021"
 [dependencies]
 rayon = "1.10.0"
 tempfile = "3.13.0"
-anyhow = "1.0.91"
+anyhow = "1.0.92"
 human_format = "1.1.0"
 clap = { version = "4.5.20", features = ["derive", "unicode", "wrap_help"] }
 rm_rf = "0.6.2"
@@ -23,7 +23,7 @@ indicatif = { version = "0.17.8", features = ["rayon"] }
 cfg-if = "1.0"
 fdlimit = "0.3.0"
 ahash = "0.8.11"
-anstyle = "1.0.9"
+anstyle = "1.0.10"
 signal-hook = "0.3.17"
 ignore = "0.4.23"
 
