@@ -12,8 +12,8 @@ edition = "2021"
 
 [dependencies]
 rayon = "1.10.0"
-tempfile = "3.13.0"
-anyhow = "1.0.92"
+tempfile = "3.14.0"
+anyhow = "1.0.93"
 human_format = "1.1.0"
 clap = { version = "4.5.20", features = ["derive", "unicode", "wrap_help"] }
 rm_rf = "0.6.2"
