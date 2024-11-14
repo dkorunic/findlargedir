@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 
 use anstyle::AnsiColor;
@@ -6,6 +6,7 @@ use anyhow::{anyhow, Error};
 use clap::builder::{styling::Styles, ValueParser};
 use clap::Parser;
 use clap::ValueHint;
+use normpath::PathExt;
 
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Yellow.on_default())
@@ -41,7 +42,8 @@ pub struct Args {
     pub blacklist_threshold: u64,
 
     /// Number of threads to use when calibrating and scanning
-    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2))]
+    #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2)
+    )]
     pub threads: usize,
 
     /// Seconds between status updates, set to 0 to disable
@@ -61,7 +63,8 @@ pub struct Args {
     pub skip_path: Vec<PathBuf>,
 
     /// Paths to check for large directories
-    #[clap(required = true, value_parser, value_hint = ValueHint::AnyPath)]
+    #[clap(required = true, value_parser = ValueParser::new(parse_paths), value_hint = ValueHint::AnyPath
+    )]
     pub path: Vec<PathBuf>,
 }
 
@@ -76,4 +79,38 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
         },
         Err(e) => Err(Error::from(e)),
     }
+}
+
+/// Parses a string into a `PathBuf`, checking if the path is a directory and exists.
+///
+/// # Arguments
+///
+/// * `x` - A string slice to be parsed into a `PathBuf`.
+///
+/// # Returns
+///
+/// * `Result<PathBuf, Error>` - An `Ok` variant containing a normalized `PathBuf` if the path is an existing directory,
+///    or an `Err` variant with an error message if the path does not exist or is not a directory.
+fn parse_paths(x: &str) -> Result<PathBuf, Error> {
+    let p = Path::new(x);
+
+    if directory_exists(p) {
+        Ok(p.normalize()?.into_path_buf())
+    } else {
+        Err(anyhow!("'{}' is not an existing directory", x))
+    }
+}
+
+/// Checks if the given path is a directory and exists.
+///
+/// # Arguments
+///
+/// * `x` - A reference to the path to check.
+///
+/// # Returns
+///
+/// * `bool` - `true` if the path is an existing directory, `false` otherwise.
+#[inline]
+fn directory_exists(x: &Path) -> bool {
+    x.is_dir() && x.normalize().is_ok()
 }
