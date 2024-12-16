@@ -5,6 +5,7 @@ authors = ["Dinko Korunic <dinko.korunic@gmail.com>"]
 categories = ["command-line-utilities"]
 description = "find all blackhole directories with a huge amount of filesystem entries in a flat structure"
 repository = "https://github.com/dkorunic/findlargedir"
+homepage = "https://github.com/dkorunic/findlargedir"
 readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
@@ -13,9 +14,9 @@ edition = "2021"
 [dependencies]
 rayon = "1.10.0"
 tempfile = "3.14.0"
-anyhow = "1.0.93"
+anyhow = "1.0.94"
 human_format = "1.1.0"
-clap = { version = "4.5.21", features = ["derive", "unicode", "wrap_help"] }
+clap = { version = "4.5.23", features = ["derive", "unicode", "wrap_help"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
 fs-err = "3.0.0"
@@ -46,3 +47,8 @@ overflow-checks = true
 lto = "fat"
 panic = "abort"
 codegen-units = 1
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "fat"
