@@ -9,14 +9,14 @@ homepage = "https://github.com/dkorunic/findlargedir"
 readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 rayon = "1.10.0"
-tempfile = "3.16.0"
-anyhow = "1.0.95"
+tempfile = "3.17.1"
+anyhow = "1.0.96"
 human_format = "1.1.0"
-clap = { version = "4.5.28", features = ["derive", "unicode", "wrap_help"] }
+clap = { version = "4.5.30", features = ["derive", "unicode", "wrap_help"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
 fs-err = "3.1.0"
