@@ -10,6 +10,7 @@ readme = "README.md"
 license = "MIT"
 exclude = [".gitignore"]
 edition = "2024"
+rust-version = "1.85"
 
 [dependencies]
 rayon = "1.10.0"
