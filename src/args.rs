@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use anstyle::AnsiColor;
-use anyhow::{anyhow, Error};
-use clap::builder::{styling::Styles, ValueParser};
+use anyhow::{Error, anyhow};
 use clap::Parser;
 use clap::ValueHint;
+use clap::builder::{ValueParser, styling::Styles};
 use normpath::PathExt;
 
 const STYLES: Styles = Styles::styled()

@@ -2,8 +2,8 @@ use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Error};
 use fs_err as fs;

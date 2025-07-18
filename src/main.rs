@@ -1,15 +1,14 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::os::unix::fs::MetadataExt;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use ahash::AHashSet;
 use anyhow::{Context, Error, Result};
-use cfg_if::cfg_if;
 use clap::Parser;
-use fdlimit::{raise_fd_limit, Outcome};
+use fdlimit::{Outcome, raise_fd_limit};
 use fs_err as fs;
 use indicatif::HumanDuration;
 use tempfile::TempDir;
@@ -20,15 +19,10 @@ mod interrupt;
 mod progress;
 mod walk;
 
-cfg_if! {
-    if #[cfg(all(target_os = "linux", target_arch = "x86_64"))] {
-        use_jemalloc!();
-    } else if #[cfg(all(target_os = "linux", target_arch = "aarch64"))] {
-        use_jemalloc!();
-    } else if #[cfg(target_os = "macos")] {
-        use_jemalloc!();
-    }
-}
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 /// Entry point for the filesystem scanning application.
 ///
@@ -137,31 +131,4 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
-}
-
-/// Macro to enable the use of the jemalloc allocator in a Rust project.
-///
-/// This macro configures the project to use jemalloc instead of the default
-/// allocator. jemalloc is often preferred for its performance characteristics,
-/// especially in multithreaded environments.
-///
-/// # Usage
-/// Place this macro at the top of your main.rs or lib.rs to enable jemalloc
-/// for your entire Rust project.
-///
-/// # Example
-/// ```
-/// use_jemalloc!();
-/// ```
-///
-/// Note: Ensure that the `jemalloc` crate is included in your project's
-/// dependencies.
-#[macro_export]
-macro_rules! use_jemalloc {
-    () => {
-        use tikv_jemallocator::Jemalloc;
-
-        #[global_allocator]
-        static GLOBAL: Jemalloc = Jemalloc;
-    };
 }
