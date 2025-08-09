@@ -18,7 +18,7 @@ rayon = "1.10.0"
 tempfile = "3.20.0"
 anyhow = "1.0.98"
 human_format = "1.1.0"
-clap = { version = "4.5.41", features = ["derive", "unicode", "wrap_help"] }
+clap = { version = "4.5.43", features = ["derive", "unicode", "wrap_help"] }
 rm_rf = "0.6.2"
 ansi_term = "0.12.1"
 fs-err = "3.1.1"

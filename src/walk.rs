@@ -165,71 +165,71 @@ fn process_dir_entry(
     args: &Arc<Args>,
     dir_count: &Arc<AtomicU64>,
 ) -> WalkState {
-    if let Ok(dir_entry) = dir_entry_result {
-        if let Some(dir_entry_type) = dir_entry.file_type() {
-            if !dir_entry_type.is_dir() {
-                return WalkState::Continue;
-            }
+    if let Ok(dir_entry) = dir_entry_result
+        && let Some(dir_entry_type) = dir_entry.file_type()
+    {
+        if !dir_entry_type.is_dir() {
+            return WalkState::Continue;
+        }
 
-            let full_path = dir_entry.path();
+        let full_path = dir_entry.path();
 
-            // Visited directory count
-            dir_count.fetch_add(1, Ordering::AcqRel);
+        // Visited directory count
+        dir_count.fetch_add(1, Ordering::AcqRel);
 
-            // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
-            if !skip_path.is_empty()
-                && skip_path.contains(&full_path.to_path_buf())
+        // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
+        if !skip_path.is_empty()
+            && skip_path.contains(&full_path.to_path_buf())
+        {
+            println!(
+                "Skipping further scan at {} as requested",
+                full_path.display()
+            );
+
+            return WalkState::Skip;
+        }
+
+        // Retrieve Unix metadata for a given directory
+        if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
+            // If `one_filesystem` flag has been set and if directory is not residing
+            // on the same device as top search path, print warning and abort deeper
+            // scanning
+            if args.one_filesystem
+                && (dir_entry_metadata.dev() != path_metadata.dev())
             {
                 println!(
-                    "Skipping further scan at {} as requested",
+                    "Identified filesystem boundary at {}, skipping...",
                     full_path.display()
                 );
 
                 return WalkState::Skip;
             }
 
-            // Retrieve Unix metadata for a given directory
-            if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
-                // If `one_filesystem` flag has been set and if directory is not residing
-                // on the same device as top search path, print warning and abort deeper
-                // scanning
-                if args.one_filesystem
-                    && (dir_entry_metadata.dev() != path_metadata.dev())
-                {
-                    println!(
-                        "Identified filesystem boundary at {}, skipping...",
-                        full_path.display()
-                    );
+            // Identify size and calculate approximate directory entry count
+            let size = dir_entry_metadata.size();
+            let approx_files = size / size_inode_ratio;
 
-                    return WalkState::Skip;
-                }
+            // Print count warnings if necessary
+            if approx_files > args.blacklist_threshold {
+                print_offender(
+                    full_path,
+                    size,
+                    approx_files,
+                    args.accurate,
+                    true,
+                );
 
-                // Identify size and calculate approximate directory entry count
-                let size = dir_entry_metadata.size();
-                let approx_files = size / size_inode_ratio;
+                return WalkState::Skip;
+            } else if approx_files > args.alert_threshold {
+                print_offender(
+                    full_path,
+                    size,
+                    approx_files,
+                    args.accurate,
+                    false,
+                );
 
-                // Print count warnings if necessary
-                if approx_files > args.blacklist_threshold {
-                    print_offender(
-                        full_path,
-                        size,
-                        approx_files,
-                        args.accurate,
-                        true,
-                    );
-
-                    return WalkState::Skip;
-                } else if approx_files > args.alert_threshold {
-                    print_offender(
-                        full_path,
-                        size,
-                        approx_files,
-                        args.accurate,
-                        false,
-                    );
-
-                    return WalkState::Continue;
-                }
+                return WalkState::Continue;
             }
         }
     }
