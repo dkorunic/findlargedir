@@ -97,7 +97,7 @@ fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     if directory_exists(p) {
         Ok(p.normalize()?.into_path_buf())
     } else {
-        Err(anyhow!("'{}' is not an existing directory", x))
+        Err(anyhow!("'{x}' is not an existing directory"))
     }
 }
 
