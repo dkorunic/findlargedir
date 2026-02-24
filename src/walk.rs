@@ -12,7 +12,6 @@ use std::time::Duration;
 use crate::args::Args;
 use ahash::AHashSet;
 use ansi_term::Colour::{Green, Red, Yellow};
-use fs_err as fs;
 use human_format::Formatter;
 use ignore::{DirEntry, Error, WalkBuilder, WalkState};
 use indicatif::HumanBytes;
@@ -67,33 +66,35 @@ pub fn parallel_search(
     // Create hash set for path exclusions
     let skip_path = &args.skip_path.iter().cloned().collect::<AHashSet<_>>();
 
-    // Thread pool for status reporting and filesystem walk
-    let pool = Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .expect("Unable to spawn reporting thread pool"),
-    );
-
     // Processed directory count
     let dir_count = &Arc::new(AtomicU64::new(0));
 
     // Status update thread
-    if args.updates > 0 {
+    let scan_done = Arc::new(AtomicBool::new(false));
+    let status_thread = if args.updates > 0 {
         let dir_count = dir_count.clone();
         let sleep_delay = args.updates;
+        let scan_done = scan_done.clone();
 
-        pool.spawn(move || loop {
-            sleep(Duration::from_secs(sleep_delay));
+        Some(std::thread::spawn(move || {
+            loop {
+                sleep(Duration::from_secs(sleep_delay));
 
-            let count = dir_count.load(Ordering::Acquire);
-            println!(
-                "Processed {} directories so far, next update in {} seconds",
-                Green.paint(count.to_string()),
-                sleep_delay
-            );
-        });
-    }
+                if scan_done.load(Ordering::Acquire) {
+                    break;
+                }
+
+                let count = dir_count.load(Ordering::Acquire);
+                println!(
+                    "Processed {} directories so far, next update in {} seconds",
+                    Green.paint(count.to_string()),
+                    sleep_delay
+                );
+            }
+        }))
+    } else {
+        None
+    };
 
     // Perform target filesystem walking
     WalkBuilder::new(path)
@@ -123,6 +124,13 @@ pub fn parallel_search(
                 }
             })
         });
+
+    // Stop status update thread if running
+    scan_done.store(true, Ordering::Release);
+    if let Some(thread) = status_thread {
+        thread.thread().unpark(); // wake up thread to exit quicker if possible, but actually we use sleep which is not unparkable, but it's ok
+        let _ = thread.join();
+    }
 
     dir_count.load(Ordering::Acquire)
 }
@@ -175,12 +183,10 @@ fn process_dir_entry(
         let full_path = dir_entry.path();
 
         // Visited directory count
-        dir_count.fetch_add(1, Ordering::AcqRel);
+        dir_count.fetch_add(1, Ordering::Relaxed);
 
         // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
-        if !skip_path.is_empty()
-            && skip_path.contains(&full_path.to_path_buf())
-        {
+        if !skip_path.is_empty() && skip_path.contains(full_path) {
             println!(
                 "Skipping further scan at {} as requested",
                 full_path.display()
@@ -190,7 +196,7 @@ fn process_dir_entry(
         }
 
         // Retrieve Unix metadata for a given directory
-        if let Ok(dir_entry_metadata) = fs::metadata(full_path) {
+        if let Ok(dir_entry_metadata) = dir_entry.metadata() {
             // If `one_filesystem` flag has been set and if directory is not residing
             // on the same device as top search path, print warning and abort deeper
             // scanning

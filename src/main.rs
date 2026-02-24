@@ -56,17 +56,16 @@ fn main() -> Result<(), Error> {
     // Search only unique paths
     let mut visited_paths = AHashSet::with_capacity(args.path.len());
 
-    for path in args.path.clone() {
+    for path in &args.path {
         // Keep order of provided path arguments, but skip already visited paths
-        match visited_paths.get(&path) {
-            None => visited_paths.insert(path.clone()),
-            _ => continue,
-        };
+        if !visited_paths.insert(path.clone()) {
+            continue;
+        }
 
         println!("Started analysis for path {}", path.display());
 
         // Retrieve Unix metadata for top search path
-        let path_metadata = fs::metadata(&path)
+        let path_metadata = fs::metadata(path)
             .context("Unable to retrieve top search directory metadata")?;
 
         // Directory inode size to number of entries ratio is either manually provided in
@@ -113,7 +112,7 @@ fn main() -> Result<(), Error> {
         ));
 
         let dir_count = walk::parallel_search(
-            &path,
+            path,
             &path_metadata,
             size_inode_ratio,
             &shutdown_walk,

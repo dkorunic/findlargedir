@@ -90,7 +90,7 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
 /// # Returns
 ///
 /// * `Result<PathBuf, Error>` - An `Ok` variant containing a normalized `PathBuf` if the path is an existing directory,
-///    or an `Err` variant with an error message if the path does not exist or is not a directory.
+///   or an `Err` variant with an error message if the path does not exist or is not a directory.
 fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     let p = Path::new(x);
 
