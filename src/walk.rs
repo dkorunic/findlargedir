@@ -66,35 +66,33 @@ pub fn parallel_search(
     // Create hash set for path exclusions
     let skip_path = &args.skip_path.iter().cloned().collect::<AHashSet<_>>();
 
+    // Thread pool for status reporting and filesystem walk
+    let pool = Arc::new(
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("Unable to spawn reporting thread pool"),
+    );
+
     // Processed directory count
     let dir_count = &Arc::new(AtomicU64::new(0));
 
     // Status update thread
-    let scan_done = Arc::new(AtomicBool::new(false));
-    let status_thread = if args.updates > 0 {
+    if args.updates > 0 {
         let dir_count = dir_count.clone();
         let sleep_delay = args.updates;
-        let scan_done = scan_done.clone();
 
-        Some(std::thread::spawn(move || {
-            loop {
-                sleep(Duration::from_secs(sleep_delay));
+        pool.spawn(move || loop {
+            sleep(Duration::from_secs(sleep_delay));
 
-                if scan_done.load(Ordering::Acquire) {
-                    break;
-                }
-
-                let count = dir_count.load(Ordering::Acquire);
-                println!(
-                    "Processed {} directories so far, next update in {} seconds",
-                    Green.paint(count.to_string()),
-                    sleep_delay
-                );
-            }
-        }))
-    } else {
-        None
-    };
+            let count = dir_count.load(Ordering::Acquire);
+            println!(
+                "Processed {} directories so far, next update in {} seconds",
+                Green.paint(count.to_string()),
+                sleep_delay
+            );
+        });
+    }
 
     // Perform target filesystem walking
     WalkBuilder::new(path)
@@ -124,13 +122,6 @@ pub fn parallel_search(
                 }
             })
         });
-
-    // Stop status update thread if running
-    scan_done.store(true, Ordering::Release);
-    if let Some(thread) = status_thread {
-        thread.thread().unpark(); // wake up thread to exit quicker if possible, but actually we use sleep which is not unparkable, but it's ok
-        let _ = thread.join();
-    }
 
     dir_count.load(Ordering::Acquire)
 }
@@ -183,7 +174,7 @@ fn process_dir_entry(
         let full_path = dir_entry.path();
 
         // Visited directory count
-        dir_count.fetch_add(1, Ordering::Relaxed);
+        dir_count.fetch_add(1, Ordering::AcqRel);
 
         // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
         if !skip_path.is_empty() && skip_path.contains(full_path) {
