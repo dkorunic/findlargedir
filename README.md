@@ -6,75 +6,66 @@
 
 ![](ferris.png)
 
-(Ferris the Detective by [Esther Arzola](https://www.redbubble.com/people/earzola/shop), original design by [Karen Rustad Tölva](https://www.rustacean.net))
+(Ferris the Detective by [Esther Arzola](https://www.redbubble.com/people/earzola/shop), original design by [Karen Rustad Tölva](https://www.rustacean.net))
 
 ## About
 
-Findlargedir is a tool specifically written to help **quickly** identify "black hole" directories on an any filesystem having more than 100k entries in a single flat structure. When a directory has **many entries** (directories or files), getting directory listing gets slower and slower, impacting performance of all processes attempting to get a directory listing (for instance to delete some files and/or to find some specific files). Processes reading large directory inodes get frozen while doing so and end up in the **uninterruptible sleep** ("D" state) for longer and longer periods of time. Depending on the filesystem, this might start to become visible with 100k entries and starts being a very noticeable performance impact with 1M+ entries.
+`findlargedir` is a tool written specifically to help **quickly** identify "black hole" directories on any filesystem — directories with an extremely large number of entries in a flat structure (100k+). When a directory contains **many entries** (files or subdirectories), listing its contents becomes progressively slower, degrading the performance of every process that needs to read it. Processes reading large directory inodes can freeze in **uninterruptible sleep** ("D" state) for extended periods. Depending on the filesystem, this may start becoming noticeable around 100k entries and can be a severe performance problem at 1M+ entries.
 
-Such directories mostly **cannot shrink back** even if content gets cleaned up due to the fact that most Linux and Un\*x filesystems do not support directory inode shrinking (for instance very common ext3/ext4). This often happens with forgotten Web sessions directory (PHP sessions folder where GC interval was configured to several days), various cache folders (CMS compiled templates and caches), POSIX filesystem emulating object storage, etc.
+Such directories mostly **cannot shrink back** even after their contents are cleaned up, because most Linux and Unix filesystems do not support directory inode shrinking (ext3/ext4 being a prime example). This situation commonly arises with forgotten web session directories (e.g. PHP session folders with GC intervals set to several days), CMS cache and compiled template directories, or POSIX filesystem emulations over object storage.
 
-Program will attempt to identify any number of such events and report on them based on **calibration**, ie. how many assumed directory entries are packed in each directory inode for each filesystem. While doing so, it will determine directory inode growth ratio to number of entries/inodes and will use that ratio to quickly scan filesystem, avoiding doing expensive/slow directory lookups. While there are many tools that scan the filesystem (`find`, `du`, `ncdu`, etc.), none of them use heuristics to avoid expensive lookups, since they are designed to be **fully accurate**, while this tool is meant to use heuristics and alert on issues **without getting stuck** on problematic folders.
+The program identifies these directories using **calibration** — it measures how many directory entries correspond to each byte of inode size on the target filesystem, then uses that ratio to quickly scan without performing expensive full directory reads. While many tools exist to scan filesystems (`find`, `du`, `ncdu`, etc.), none of them use heuristics to skip expensive lookups because they are designed for **full accuracy**. This tool is instead designed to use heuristics and alert on problems **without getting stuck** on the very directories it is trying to find.
 
-Program will **not follow symlinks** and **requires r/w permissions** to calibrate directory to be able to calculate a directory inode size to number of entries ratio and estimate a number of entries in a directory without actually counting them. While this method is just an approximation of the actual number of entries in a directory, it is good enough to quickly scan for offending directories.
+By default, the program **does not follow symlinks** (use `-f` to enable) and **requires read/write permissions** on the filesystem being calibrated, in order to create temporary files and measure the resulting inode size.
 
 ![Demo](demo.gif)
 
 ## Caveats
 
-- requires r/w privileges for an each filesystem being tested, it will also create a temporary directory with a lot of temporary files which are cleaned up afterwards
-- accurate mode (`-a`) can cause an excessive I/O and an excessive memory use; only use when appropriate
+- Requires read/write privileges on each filesystem being tested. A temporary directory with many small files is created during calibration and cleaned up afterwards.
+- Accurate mode (`-a`) can cause excessive I/O and high memory usage; use it only when needed.
 
 ## Usage
 
 ```shell
+find all blackhole directories with a huge amount of filesystem entries in a flat structure
+
 Usage: findlargedir [OPTIONS] <PATH>...
 
 Arguments:
   <PATH>...  Paths to check for large directories
 
 Options:
-  -a, --accurate <ACCURATE>
-          Perform accurate directory entry counting [default: false] [possible values: true, false]
-  -o, --one-filesystem <ONE_FILESYSTEM>
-          Do not cross mount points [default: true] [possible values: true, false]
-  -c, --calibration-count <CALIBRATION_COUNT>
-          Calibration directory file count [default: 100000]
-  -A, --alert-threshold <ALERT_THRESHOLD>
-          Alert threshold count (print the estimate) [default: 10000]
-  -B, --blacklist-threshold <BLACKLIST_THRESHOLD>
-          Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
-  -x, --threads <THREADS>
-          Number of threads to use when calibrating and scanning [default: 24]
-  -p, --updates <UPDATES>
-          Seconds between status updates, set to 0 to disable [default: 20]
-  -i, --size-inode-ratio <SIZE_INODE_RATIO>
-          Skip calibration and provide directory entry to inode size ratio (typically ~21-32) [default: 0]
-  -t, --calibration-path <CALIBRATION_PATH>
-          Custom calibration directory path
-  -s, --skip-path <SKIP_PATH>
-          Directories to exclude from scanning
-  -h, --help
-          Print help information
-  -V, --version
-          Print version information
+  -f, --follow-symlinks <FOLLOW_SYMLINKS>          Follow symlinks [default: false] [possible values: true, false]
+  -a, --accurate <ACCURATE>                        Perform accurate directory entry counting [default: false] [possible values: true, false]
+  -o, --one-filesystem <ONE_FILESYSTEM>            Do not cross mount points [default: true] [possible values: true, false]
+  -c, --calibration-count <CALIBRATION_COUNT>      Calibration directory file count [default: 100]
+  -A, --alert-threshold <ALERT_THRESHOLD>          Alert threshold count (print the estimate) [default: 10000]
+  -B, --blacklist-threshold <BLACKLIST_THRESHOLD>  Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
+  -x, --threads <THREADS>                          Number of threads to use when calibrating and scanning [default: 20]
+  -p, --updates <UPDATES>                          Seconds between status updates, set to 0 to disable [default: 20]
+  -i, --size-inode-ratio <SIZE_INODE_RATIO>        Skip calibration and provide directory entry to inode size ratio (typically ~21-32) [default: 0]
+  -t, --calibration-path <CALIBRATION_PATH>        Custom calibration directory path
+  -s, --skip-path <SKIP_PATH>                      Directories to exclude from scanning
+  -h, --help                                       Print help
+  -V, --version                                    Print version
 ```
 
-When using **accurate mode** (`-a` parameter) beware that large directory lookups will stall the process completely for extended periods of time. What this mode does is basically a secondary fully accurate pass on a possibly offending directory calculating exact number of entries.
+**Accurate mode** (`-a`) performs a secondary, fully accurate pass over any flagged directories to get exact entry counts. Be aware that large directories will stall the process entirely for extended periods during this pass.
 
-To avoid descending into mounted filesystems (as in find -xdev option), parameter **one-filesystem mode** (`-o` parameter) is toggled by default, but it can be disabled if necessary.
+**One-filesystem mode** (`-o`) prevents the scan from descending into mounted filesystems, similar to `find -xdev`. It is enabled by default but can be disabled when scanning across mount points is desired.
 
-It is possible to completely skip calibration phase by manually providing directory inode size to number of entries ratio with `-i` parameter. It makes sense only when you already know the ratio, for example from previous runs.
+**Skipping calibration** is possible by supplying the inode-size-to-entry ratio directly with `-i`. This is useful when the ratio is already known from a previous run on the same filesystem.
 
-Setting `-p` paramter to 0 will stop program from giving occasional status updates.
+Setting `-p 0` disables periodic status updates.
 
 ## Benchmarks
 
-### Findlargedir vs GNU find
+### findlargedir vs GNU find
 
 #### Mid-range server / mechanical storage
 
-Hardware: 8-core Xeon E5-1630 with 4-drive SATA RAID-10
+Hardware: 8-core Xeon E5-1630 with a 4-drive SATA RAID-10 array
 
 Benchmark setup:
 
@@ -88,7 +79,7 @@ $ cat bench2.sh
 exec /usr/local/sbin/findlargedir /
 ```
 
-Actual results measured with [hyperfine](https://github.com/sharkdp/hyperfine):
+Results measured with [hyperfine](https://github.com/sharkdp/hyperfine):
 
 ```shell
 $ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' \
@@ -109,7 +100,7 @@ Summary
 
 #### High-end server / SSD storage
 
-Hardware: 48-core Xeon Silver 4214, 7-drive SM883 SATA HW RAID-5 array, 2TB content (dozen of containers with small files)
+Hardware: 48-core Xeon Silver 4214, 7-drive SM883 SATA RAID-5 array, 2 TB of content (many containers with small files)
 
 Same benchmark setup. Results:
 
