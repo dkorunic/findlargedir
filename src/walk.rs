@@ -85,7 +85,7 @@ pub fn parallel_search(
         pool.spawn(move || loop {
             sleep(Duration::from_secs(sleep_delay));
 
-            let count = dir_count.load(Ordering::Acquire);
+            let count = dir_count.load(Ordering::Relaxed);
             println!(
                 "Processed {} directories so far, next update in {} seconds",
                 Green.paint(count.to_string()),
@@ -123,7 +123,7 @@ pub fn parallel_search(
             })
         });
 
-    dir_count.load(Ordering::Acquire)
+    dir_count.load(Ordering::Relaxed)
 }
 
 /// Processes a directory entry based on specified criteria and arguments.
@@ -174,7 +174,7 @@ fn process_dir_entry(
         let full_path = dir_entry.path();
 
         // Visited directory count
-        dir_count.fetch_add(1, Ordering::AcqRel);
+        dir_count.fetch_add(1, Ordering::Relaxed);
 
         // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
         if !skip_path.is_empty() && skip_path.contains(full_path) {
@@ -254,14 +254,21 @@ fn print_offender(
     red_alert: bool,
 ) {
     // Pretty print either the accurate directory count or the approximation
+    let fmt = Formatter::new();
     let human_files = if accurate {
         let exact_files = match read_dir(full_path) {
             Ok(r) => r.count() as u64,
-            Err(_) => approx_files,
+            Err(e) => {
+                println!(
+                    "Warning: unable to get exact count for {}, falling back to approximation: {e}",
+                    full_path.display()
+                );
+                approx_files
+            }
         };
-        Formatter::new().format(exact_files as f64)
+        fmt.format(exact_files as f64)
     } else {
-        Formatter::new().format(approx_files as f64)
+        fmt.format(approx_files as f64)
     };
 
     println!(

@@ -94,23 +94,9 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
 fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     let p = Path::new(x);
 
-    if directory_exists(p) {
+    if p.is_dir() {
         Ok(p.normalize()?.into_path_buf())
     } else {
         Err(anyhow!("'{x}' is not an existing directory"))
     }
-}
-
-/// Checks if the given path is a directory and exists.
-///
-/// # Arguments
-///
-/// * `x` - A reference to the path to check.
-///
-/// # Returns
-///
-/// * `bool` - `true` if the path is an existing directory, `false` otherwise.
-#[inline]
-fn directory_exists(x: &Path) -> bool {
-    x.is_dir() && x.normalize().is_ok()
 }
