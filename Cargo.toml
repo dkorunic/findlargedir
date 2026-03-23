@@ -15,16 +15,16 @@ rust-version = "1.88.0"
 [dependencies]
 mimalloc = "0.1.48"
 rayon = "1.11.0"
-tempfile = "3.26.0"
+tempfile = "3.27.0"
 anyhow = "1.0.102"
 human_format = "1.2.1"
-clap = { version = "4.5.60", features = ["derive", "unicode", "wrap_help"] }
+clap = { version = "4.6.0", features = ["derive", "unicode", "wrap_help"] }
 ansi_term = "0.12.1"
 fs-err = "3.3.0"
 indicatif = { version = "0.18.4", features = ["rayon"] }
 fdlimit = "0.3.0"
 ahash = "0.8.12"
-anstyle = "1.0.13"
+anstyle = "1.0.14"
 signal-hook = "0.4.3"
 ignore = "0.4.25"
 normpath = "1.5.0"
