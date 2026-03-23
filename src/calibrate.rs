@@ -1,22 +1,17 @@
 use std::fs::File;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Error};
 use fs_err as fs;
 use rayon::prelude::*;
-use rm_rf::ensure_removed;
 
 use crate::{args, progress};
 
 /// Default number of files to create in the calibration directory
 pub const DEFAULT_TEST_COUNT: u64 = 100;
-
-/// Default exit error code in case of premature termination
-const ERROR_EXIT: i32 = 1;
 
 /// Calculates the size-to-inode ratio for a given directory.
 ///
@@ -37,28 +32,13 @@ const ERROR_EXIT: i32 = 1;
 ///
 /// # Errors
 /// This function can return an error if it fails to create the thread pool, create files,
-/// delete the directory, or retrieve metadata from the test directory.
-///
-/// # Examples
-/// ```
-/// let test_path = Path::new("/tmp/test_dir");
-/// let shutdown = Arc::new(AtomicBool::new(false));
-/// let args = Arc::new(args::Args {
-///     threads: 4,
-///     calibration_count: 1000,
-/// });
-/// let ratio = get_inode_ratio(&test_path, &shutdown, &args);
-/// match ratio {
-///     Ok(ratio) => println!("Size-to-inode ratio: {}", ratio),
-///     Err(e) => println!("Failed to calculate size-to-inode ratio: {}", e),
-/// }
-/// ```
+/// or retrieve metadata from the test directory.
 pub fn get_inode_ratio(
     test_path: &Path,
     shutdown: &Arc<AtomicBool>,
     args: &Arc<args::Args>,
 ) -> Result<u64, Error> {
-    println!("Starting test directory calibration in {}", test_path.display(),);
+    println!("Starting test directory calibration in {}", test_path.display());
 
     // Thread pool for mass file creation
     let pool = rayon::ThreadPoolBuilder::new()
@@ -71,10 +51,12 @@ pub fn get_inode_ratio(
     // Mass create files; filenames are short to get minimal size to inode ratio
     let res: Result<(), Error> = pool.install(|| {
         (0..args.calibration_count).into_par_iter().try_for_each(|i| {
-            if !shutdown.load(Ordering::Relaxed) {
-                File::create(test_path.join(i.to_string()))
-                    .context("Unable to create test file")?;
+            if shutdown.load(Ordering::Relaxed) {
+                return Err(anyhow::anyhow!("shutdown requested"));
             }
+
+            File::create(test_path.join(i.to_string()))
+                .context("Unable to create test file")?;
 
             Ok(())
         })
@@ -82,26 +64,17 @@ pub fn get_inode_ratio(
 
     pb.finish_with_message("Done.");
 
-    // Check for calibration errors
-    if let Err(e) = res {
-        println!("Fatal program error, exiting: {e}");
-
-        // TempDir cleanup will most likely fail as well
-        _ = ensure_removed(test_path);
-
-        process::exit(ERROR_EXIT);
+    // Propagate real errors; ignore the sentinel error emitted on shutdown
+    if let Err(e) = res
+        && !shutdown.load(Ordering::Relaxed)
+    {
+        return Err(e);
     }
 
-    // Terminate on received interrupt signal
+    // Terminate on received interrupt signal; TempDir owned by the caller
+    // is dropped automatically, so no explicit cleanup is needed here.
     if shutdown.load(Ordering::Relaxed) {
-        println!(
-            "Requested program exit, stopping and deleting temporary files...",
-        );
-        ensure_removed(test_path).expect(
-            "Unable to completely delete calibration directory, exiting",
-        );
-
-        process::exit(ERROR_EXIT);
+        return Ok(0);
     }
 
     let size_inode_ratio = fs::metadata(test_path)

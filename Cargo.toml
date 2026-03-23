@@ -19,7 +19,6 @@ tempfile = "3.26.0"
 anyhow = "1.0.102"
 human_format = "1.2.1"
 clap = { version = "4.5.60", features = ["derive", "unicode", "wrap_help"] }
-rm_rf = "0.6.2"
 ansi_term = "0.12.1"
 fs-err = "3.3.0"
 indicatif = { version = "0.18.4", features = ["rayon"] }

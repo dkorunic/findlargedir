@@ -17,7 +17,7 @@ const PROGRESS_TICK: u64 = 80;
 /// Returns a `ProgressBar` object configured with a steady tick and custom spinner style.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// let spinner = new_spinner("Loading...");
 /// ```
 pub fn new_spinner<S>(msg: S) -> ProgressBar

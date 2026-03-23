@@ -30,7 +30,7 @@ pub struct Args {
     pub one_filesystem: bool,
 
     /// Calibration directory file count
-    #[clap(short = 'c', long, value_parser, default_value_t = crate::calibrate::DEFAULT_TEST_COUNT)]
+    #[clap(short = 'c', long, value_parser = clap::value_parser!(u64).range(1..), default_value_t = crate::calibrate::DEFAULT_TEST_COUNT)]
     pub calibration_count: u64,
 
     /// Alert threshold count (print the estimate)
@@ -41,7 +41,7 @@ pub struct Args {
     #[clap(short = 'B', long, value_parser, default_value_t = crate::walk::BLACKLIST_COUNT)]
     pub blacklist_threshold: u64,
 
-    /// Number of threads to use when calibrating and scanning
+    /// Number of threads to use when calibrating and scanning (2..=65535)
     #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2)
     )]
     pub threads: usize,
@@ -59,7 +59,7 @@ pub struct Args {
     pub calibration_path: Option<PathBuf>,
 
     /// Directories to exclude from scanning
-    #[clap(short = 's', long, value_parser, value_hint = ValueHint::AnyPath)]
+    #[clap(short = 's', long, value_parser = ValueParser::new(parse_skip_paths), value_hint = ValueHint::AnyPath)]
     pub skip_path: Vec<PathBuf>,
 
     /// Paths to check for large directories
@@ -99,4 +99,9 @@ fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     } else {
         Err(anyhow!("'{x}' is not an existing directory"))
     }
+}
+
+/// Normalises a skip-path string without requiring the path to exist.
+fn parse_skip_paths(x: &str) -> Result<PathBuf, Error> {
+    Ok(Path::new(x).normalize()?.into_path_buf())
 }

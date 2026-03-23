@@ -3,7 +3,6 @@ use std::fs::read_dir;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::sleep;
@@ -16,15 +15,16 @@ use human_format::Formatter;
 use ignore::{DirEntry, Error, WalkBuilder, WalkState};
 use indicatif::HumanBytes;
 
+thread_local! {
+    static FORMATTER: Formatter = Formatter::new();
+}
+
 /// Default number of files in a folder to cause alert
 pub const ALERT_COUNT: u64 = 10_000;
 
 /// Default number of files in a folder to cause red alert and further blacklist from the deeper
 /// scan
 pub const BLACKLIST_COUNT: u64 = 100_000;
-
-/// Default exit error code in case of premature termination
-const ERROR_EXIT: i32 = 1;
 
 /// Default status update period in seconds
 pub const STATUS_SECONDS: u64 = 20;
@@ -37,12 +37,13 @@ pub const STATUS_SECONDS: u64 = 20;
 /// * `size_inode_ratio` - The ratio used to calculate the approximate number of files in a directory.
 /// * `shutdown_walk` - A shared reference to a boolean flag indicating if the search should be terminated.
 /// * `args` - A shared reference to the command-line arguments provided.
+/// * `skip_path` - A reference to the set of paths to be excluded from scanning.
 ///
 /// # Returns
-/// The total count of processed directories during the filesystem search.
+/// The total count of analyzed directories during the filesystem search.
 ///
 /// # Behaviors
-/// - Creates a hash set of paths to be excluded from scanning.
+/// - Uses the provided hash set of paths to exclude from scanning.
 /// - Initializes a thread pool for status reporting and filesystem traversal.
 /// - Updates the processed directory count based on the status update interval.
 /// - Initiates the parallel filesystem walk using specified parameters.
@@ -50,32 +51,29 @@ pub const STATUS_SECONDS: u64 = 20;
 /// - Processes each directory entry encountered during the search.
 ///
 /// # Types
-/// * `path` - `&PathBuf`
+/// * `path` - `&Path`
 /// * `path_metadata` - `&Metadata`
 /// * `size_inode_ratio` - `u64`
 /// * `shutdown_walk` - `&Arc<AtomicBool>`
 /// * `args` - `&Arc<Args>`
+/// * `skip_path` - `&AHashSet<PathBuf>`
 /// * Return Type - `u64`
 pub fn parallel_search(
-    path: &PathBuf,
+    path: &Path,
     path_metadata: &Metadata,
     size_inode_ratio: u64,
     shutdown_walk: &Arc<AtomicBool>,
     args: &Arc<Args>,
+    skip_path: &AHashSet<PathBuf>,
 ) -> u64 {
-    // Create hash set for path exclusions
-    let skip_path = &args.skip_path.iter().cloned().collect::<AHashSet<_>>();
-
-    // Thread pool for status reporting and filesystem walk
-    let pool = Arc::new(
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .expect("Unable to spawn reporting thread pool"),
-    );
+    // Thread pool for status reporting
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .expect("Unable to spawn reporting thread pool");
 
     // Processed directory count
-    let dir_count = &Arc::new(AtomicU64::new(0));
+    let dir_count = Arc::new(AtomicU64::new(0));
 
     // Status update thread
     if args.updates > 0 {
@@ -102,24 +100,21 @@ pub fn parallel_search(
         .threads(args.threads)
         .build_parallel()
         .run(|| {
-            Box::new({
-                move |dir_entry_result| {
-                    // Terminate on received interrupt signal
-                    if shutdown_walk.load(Ordering::Relaxed) {
-                        println!("Requested program exit, stopping scan...");
-
-                        process::exit(ERROR_EXIT);
-                    }
-
-                    process_dir_entry(
-                        path_metadata,
-                        size_inode_ratio,
-                        &dir_entry_result,
-                        skip_path,
-                        args,
-                        dir_count,
-                    )
+            let dir_count = dir_count.clone();
+            Box::new(move |dir_entry_result| {
+                // Terminate on received interrupt signal
+                if shutdown_walk.load(Ordering::Relaxed) {
+                    return WalkState::Quit;
                 }
+
+                process_dir_entry(
+                    path_metadata,
+                    size_inode_ratio,
+                    &dir_entry_result,
+                    skip_path,
+                    args,
+                    &dir_count,
+                )
             })
         });
 
@@ -134,16 +129,16 @@ pub fn parallel_search(
 /// * `dir_entry_result` - The result of attempting to read a directory entry.
 /// * `skip_path` - A set of paths to be excluded from scanning.
 /// * `args` - A shared reference to the command-line arguments provided.
-/// * `dir_count` - A shared reference to the atomic counter for visited directories.
+/// * `dir_count` - A reference to the atomic counter for analyzed directories.
 ///
 /// # Returns
 /// The state of the directory processing, indicating whether to continue, skip, or stop scanning.
 ///
 /// # Behaviors
 /// - Checks if the directory entry is a directory; if not, continues to the next entry.
-/// - Increments the visited directory count.
 /// - Skips scanning if the directory is in the skip path list.
 /// - Skips scanning if the directory is on a different filesystem and the `one_filesystem` flag is set.
+/// - Increments the scanned directory count.
 /// - Calculates the size and approximate file count of the directory entry.
 /// - Prints warnings and potentially marks the directory as an offender based on file count thresholds.
 /// - Returns the appropriate state for further scanning based on the calculated conditions.
@@ -154,7 +149,7 @@ pub fn parallel_search(
 /// * `dir_entry_result` - `&Result<DirEntry, ignore::Error>`
 /// * `skip_path` - `&AHashSet<PathBuf>`
 /// * `args` - `&Arc<Args>`
-/// * `dir_count` - `&Arc<AtomicU64>`
+/// * `dir_count` - `&AtomicU64`
 /// * Return Type - `WalkState`
 fn process_dir_entry(
     path_metadata: &Metadata,
@@ -162,7 +157,7 @@ fn process_dir_entry(
     dir_entry_result: &Result<DirEntry, Error>,
     skip_path: &AHashSet<PathBuf>,
     args: &Arc<Args>,
-    dir_count: &Arc<AtomicU64>,
+    dir_count: &AtomicU64,
 ) -> WalkState {
     if let Ok(dir_entry) = dir_entry_result
         && let Some(dir_entry_type) = dir_entry.file_type()
@@ -172,9 +167,6 @@ fn process_dir_entry(
         }
 
         let full_path = dir_entry.path();
-
-        // Visited directory count
-        dir_count.fetch_add(1, Ordering::Relaxed);
 
         // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
         if !skip_path.is_empty() && skip_path.contains(full_path) {
@@ -202,8 +194,14 @@ fn process_dir_entry(
                 return WalkState::Skip;
             }
 
+            // Count only directories that pass all filters and are actually analyzed
+            dir_count.fetch_add(1, Ordering::Relaxed);
+
             // Identify size and calculate approximate directory entry count
             let size = dir_entry_metadata.size();
+            if size_inode_ratio == 0 {
+                return WalkState::Continue;
+            }
             let approx_files = size / size_inode_ratio;
 
             // Print count warnings if necessary
@@ -234,7 +232,6 @@ fn process_dir_entry(
     WalkState::Continue
 }
 
-#[allow(clippy::cast_precision_loss)]
 /// Prints information about directories that exceed specified thresholds.
 ///
 /// This function is called when the estimated number of files in a directory exceeds either the alert or blacklist thresholds.
@@ -245,7 +242,8 @@ fn process_dir_entry(
 /// * `size` - The size of the directory in bytes.
 /// * `file_count` - The estimated number of files in the directory.
 /// * `accurate` - A boolean flag indicating whether the size estimation is considered accurate.
-/// * `is_blacklisted` - A boolean flag indicating whether the directory exceeds the blacklist threshold.
+/// * `red_alert` - A boolean flag indicating whether the directory exceeds the blacklist threshold.
+#[allow(clippy::cast_precision_loss)]
 fn print_offender(
     full_path: &Path,
     size: u64,
@@ -254,7 +252,6 @@ fn print_offender(
     red_alert: bool,
 ) {
     // Pretty print either the accurate directory count or the approximation
-    let fmt = Formatter::new();
     let human_files = if accurate {
         let exact_files = match read_dir(full_path) {
             Ok(r) => r.count() as u64,
@@ -266,9 +263,9 @@ fn print_offender(
                 approx_files
             }
         };
-        fmt.format(exact_files as f64)
+        FORMATTER.with(|f| f.format(exact_files as f64))
     } else {
-        fmt.format(approx_files as f64)
+        FORMATTER.with(|f| f.format(approx_files as f64))
     };
 
     println!(

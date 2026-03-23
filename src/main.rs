@@ -1,8 +1,9 @@
 #![warn(clippy::all, clippy::pedantic)]
 
 use std::os::unix::fs::MetadataExt;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use ahash::AHashSet;
@@ -37,14 +38,24 @@ static GLOBAL: MiMalloc = MiMalloc;
 /// - Handles any errors returned by `parallel_search` and exits with an appropriate status code.
 ///
 /// # Returns:
-/// - Typically does not return and calls `std::process::exit` to terminate the program.
+/// - `Ok(())` on successful completion or clean shutdown.
+/// - `Err(...)` if a fatal setup step (metadata, signal handler) fails.
 fn main() -> Result<(), Error> {
     let args = Arc::new(args::Args::parse());
 
+    // Alert threshold must be strictly below the blacklist threshold; otherwise
+    // the yellow-alert branch in the walk becomes unreachable dead code.
+    if args.alert_threshold >= args.blacklist_threshold {
+        anyhow::bail!(
+            "alert threshold ({}) must be less than blacklist threshold ({})",
+            args.alert_threshold,
+            args.blacklist_threshold
+        );
+    }
+
     // Setup termination signal (SIGINT, SIGTERM and SIGQUIT) handlers that will cause program to stop
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let shutdown_walk = shutdown.clone();
-    interrupt::setup_interrupt_handler(&shutdown)?;
+    let shutdown_walk = Arc::new(AtomicBool::new(false));
+    interrupt::setup_interrupt_handler(&shutdown_walk)?;
 
     println!("Using {} threads for calibration and scanning", args.threads);
 
@@ -53,12 +64,20 @@ fn main() -> Result<(), Error> {
         println!("Maximum number of file descriptors available: {x}");
     }
 
+    // Build skip-path set once; reused across all search roots
+    let skip_path_set: AHashSet<PathBuf> =
+        args.skip_path.iter().cloned().collect();
+
     // Search only unique paths
     let mut visited_paths = AHashSet::with_capacity(args.path.len());
 
-    for path in &args.path {
-        // Keep order of provided path arguments, but skip already visited paths
-        if !visited_paths.insert(path.clone()) {
+    'paths: for path in &args.path {
+        // Deduplicate by canonical path so symlinks resolving to the same
+        // directory are not scanned twice; fall back to the normalised path
+        // on canonicalization failure (permissions, broken symlinks, etc.)
+        let canonical =
+            fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        if !visited_paths.insert(canonical) {
             continue;
         }
 
@@ -88,22 +107,27 @@ fn main() -> Result<(), Error> {
             }
 
             // Prepare temporary calibration directory in user path
-            let tmp_dir =
-                Arc::new(TempDir::new_in(user_path.as_path()).context(
-                    "Unable to setup/create calibration test directory",
-                )?);
+            let tmp_dir = TempDir::new_in(user_path.as_path()).context(
+                "Unable to setup/create calibration test directory",
+            )?;
 
             calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_walk, &args)
                 .context("Unable to calibrate inode to size ratio")?
         } else {
             // Prepare temporary calibration directory in root of the search path
-            let tmp_dir = Arc::new(TempDir::new_in(path.as_path()).context(
+            let tmp_dir = TempDir::new_in(path.as_path()).context(
                 "Unable to setup/create calibration test directory",
-            )?);
+            )?;
 
             calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_walk, &args)
                 .context("Unable to calibrate inode to size ratio")?
         };
+
+        // Check for shutdown during calibration before starting the walk
+        if shutdown_walk.load(Ordering::Relaxed) {
+            println!("Requested program exit, stopping scan...");
+            break 'paths;
+        }
 
         let start = Instant::now();
         let pb = progress::new_spinner(format!(
@@ -117,9 +141,15 @@ fn main() -> Result<(), Error> {
             size_inode_ratio,
             &shutdown_walk,
             &args,
+            &skip_path_set,
         );
 
         pb.finish_with_message("Done.");
+
+        if shutdown_walk.load(Ordering::Relaxed) {
+            println!("Requested program exit, stopping scan...");
+            break 'paths;
+        }
 
         println!(
             "Scanning path {} completed. Directories scanned: {}, Time elapsed: {}",
