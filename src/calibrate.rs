@@ -87,3 +87,96 @@ pub fn get_inode_ratio(
 
     Ok(size_inode_ratio)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use tempfile::TempDir;
+
+    use super::get_inode_ratio;
+    use crate::args::Args;
+
+    fn make_args(calibration_count: u64) -> Arc<Args> {
+        Arc::new(Args {
+            calibration_count,
+            threads: 2,
+            updates: 0,
+            alert_threshold: 10_000,
+            blacklist_threshold: 100_000,
+            one_filesystem: false,
+            follow_symlinks: false,
+            accurate: false,
+            size_inode_ratio: 0,
+            calibration_path: None,
+            skip_path: vec![],
+            path: vec![],
+        })
+    }
+
+    /// Bugs #11 and #12: a calibration run that is cut short by a
+    /// shutdown signal must return `Ok(0)` — not an error and not 1.
+    #[test]
+    fn test_calibration_returns_zero_on_shutdown() {
+        let tmp = TempDir::new().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        // Signal shutdown before the function even begins its loop.
+        shutdown.store(true, Ordering::Relaxed);
+
+        let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(100));
+
+        // Bug #12 returns Ok(1) instead of Ok(0), defeating the
+        // zero-ratio guard and causing mass false positives.
+        // Bug #11 propagates the sentinel Err instead of Ok(0).
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    /// Sanity: calibration completes without error when no shutdown
+    /// signal is set.
+    #[test]
+    fn test_calibration_completes_without_error() {
+        let tmp = TempDir::new().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(10));
+
+        assert!(
+            result.is_ok(),
+            "calibration should succeed when not interrupted"
+        );
+    }
+
+    /// Bug #1: the divisor must be `calibration_count`, not
+    /// `calibration_count - 1`.  With `count = 1` the mutated
+    /// expression evaluates to `size / 0`, which panics.
+    #[test]
+    fn test_calibration_divisor_of_one_does_not_panic() {
+        let tmp = TempDir::new().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        // Bug #1 mutation: size / (calibration_count - 1) = size / 0
+        let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(1));
+
+        assert!(result.is_ok(), "calibration_count=1 must not panic");
+    }
+
+    /// Bug #2: the parallel iterator must create exactly
+    /// `calibration_count` files.  If it creates `count - 1` files
+    /// but still divides by `count`, the ratio is inflated.
+    #[test]
+    fn test_calibration_creates_exact_number_of_files() {
+        let tmp = TempDir::new().unwrap();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let count: u64 = 5;
+
+        get_inode_ratio(tmp.path(), &shutdown, &make_args(count)).unwrap();
+
+        let created = std::fs::read_dir(tmp.path()).unwrap().count() as u64;
+        // Bug #2: iterator runs 0..count-1, creating count-1 files.
+        assert_eq!(
+            created, count,
+            "exactly calibration_count files must be created"
+        );
+    }
+}
