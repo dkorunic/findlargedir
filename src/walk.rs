@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::args::Args;
 use ahash::AHashSet;
 use ansi_term::Colour::{Green, Red, Yellow};
+use anyhow::Context;
 use human_format::Formatter;
 use ignore::{DirEntry, Error, WalkBuilder, WalkState};
 use indicatif::HumanBytes;
@@ -29,48 +30,26 @@ pub const BLACKLIST_COUNT: u64 = 100_000;
 /// Default status update period in seconds
 pub const STATUS_SECONDS: u64 = 20;
 
-/// Perform a parallel filesystem search based on specified criteria and arguments.
+/// Walks `path` in parallel, flagging directories whose estimated entry
+/// count exceeds the alert/blacklist thresholds, and returns the number of
+/// directories analyzed. A blacklisted subtree is skipped, and the walk
+/// stops early once `shutdown_walk` is set.
 ///
-/// # Arguments
-/// * `path` - A reference to the starting path for the filesystem search.
-/// * `path_metadata` - A reference to the metadata of the starting path.
-/// * `size_inode_ratio` - The ratio used to calculate the approximate number of files in a directory.
-/// * `shutdown_walk` - A shared reference to a boolean flag indicating if the search should be terminated.
-/// * `args` - A shared reference to the command-line arguments provided.
-/// * `skip_path` - A reference to the set of paths to be excluded from scanning.
-///
-/// # Returns
-/// The total count of analyzed directories during the filesystem search.
-///
-/// # Behaviors
-/// - Uses the provided hash set of paths to exclude from scanning.
-/// - Initializes a thread pool for status reporting and filesystem traversal.
-/// - Updates the processed directory count based on the status update interval.
-/// - Initiates the parallel filesystem walk using specified parameters.
-/// - Terminates the search if a shutdown signal is received.
-/// - Processes each directory entry encountered during the search.
-///
-/// # Types
-/// * `path` - `&Path`
-/// * `path_metadata` - `&Metadata`
-/// * `size_inode_ratio` - `u64`
-/// * `shutdown_walk` - `&Arc<AtomicBool>`
-/// * `args` - `&Arc<Args>`
-/// * `skip_path` - `&AHashSet<PathBuf>`
-/// * Return Type - `u64`
+/// # Errors
+/// Returns an error if the status-reporting thread pool cannot be built.
 pub fn parallel_search(
     path: &Path,
     path_metadata: &Metadata,
     size_inode_ratio: u64,
     shutdown_walk: &Arc<AtomicBool>,
-    args: &Arc<Args>,
+    args: &Args,
     skip_path: &AHashSet<PathBuf>,
-) -> u64 {
+) -> anyhow::Result<u64> {
     // Thread pool for status reporting
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .build()
-        .expect("Unable to spawn reporting thread pool");
+        .context("Unable to spawn reporting thread pool")?;
 
     // Processed directory count
     let dir_count = Arc::new(AtomicU64::new(0));
@@ -118,45 +97,21 @@ pub fn parallel_search(
             })
         });
 
-    dir_count.load(Ordering::Relaxed)
+    Ok(dir_count.load(Ordering::Relaxed))
 }
 
-/// Processes a directory entry based on specified criteria and arguments.
-///
-/// # Arguments
-/// * `path_metadata` - A reference to the metadata of the current directory.
-/// * `size_inode_ratio` - The ratio used to calculate the approximate number of files in the directory.
-/// * `dir_entry_result` - The result of attempting to read a directory entry.
-/// * `skip_path` - A set of paths to be excluded from scanning.
-/// * `args` - A shared reference to the command-line arguments provided.
-/// * `dir_count` - A reference to the atomic counter for analyzed directories.
-///
-/// # Returns
-/// The state of the directory processing, indicating whether to continue, skip, or stop scanning.
-///
-/// # Behaviors
-/// - Checks if the directory entry is a directory; if not, continues to the next entry.
-/// - Skips scanning if the directory is in the skip path list.
-/// - Skips scanning if the directory is on a different filesystem and the `one_filesystem` flag is set.
-/// - Increments the scanned directory count.
-/// - Calculates the size and approximate file count of the directory entry.
-/// - Prints warnings and potentially marks the directory as an offender based on file count thresholds.
-/// - Returns the appropriate state for further scanning based on the calculated conditions.
-///
-/// # Types
-/// * `path_metadata` - `&Metadata`
-/// * `size_inode_ratio` - `u64`
-/// * `dir_entry_result` - `&Result<DirEntry, ignore::Error>`
-/// * `skip_path` - `&AHashSet<PathBuf>`
-/// * `args` - `&Arc<Args>`
-/// * `dir_count` - `&AtomicU64`
-/// * Return Type - `WalkState`
+/// Classifies a single directory entry and returns the resulting
+/// [`WalkState`]: skips entries listed in `skip_path`, skips filesystem
+/// boundaries under `--one-filesystem`, and flags directories whose
+/// estimated entry count (`size / size_inode_ratio`) crosses the alert or
+/// blacklist thresholds. Non-directory entries and a zero ratio yield
+/// `WalkState::Continue`.
 fn process_dir_entry(
     path_metadata: &Metadata,
     size_inode_ratio: u64,
     dir_entry_result: &Result<DirEntry, Error>,
     skip_path: &AHashSet<PathBuf>,
-    args: &Arc<Args>,
+    args: &Args,
     dir_count: &AtomicU64,
 ) -> WalkState {
     if let Ok(dir_entry) = dir_entry_result
@@ -232,222 +187,9 @@ fn process_dir_entry(
     WalkState::Continue
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-
-    use ahash::AHashSet;
-    use tempfile::TempDir;
-
-    use super::parallel_search;
-    use crate::args::Args;
-
-    fn make_args(alert: u64, blacklist: u64, one_fs: bool) -> Arc<Args> {
-        Arc::new(Args {
-            alert_threshold: alert,
-            blacklist_threshold: blacklist,
-            one_filesystem: one_fs,
-            threads: 2,
-            updates: 0,
-            follow_symlinks: false,
-            accurate: false,
-            calibration_count: 100,
-            size_inode_ratio: 0,
-            calibration_path: None,
-            skip_path: vec![],
-            path: vec![],
-        })
-    }
-
-    fn no_shutdown() -> Arc<AtomicBool> {
-        Arc::new(AtomicBool::new(false))
-    }
-
-    /// Bug #7: a `size_inode_ratio` of 0 must not cause a
-    /// divide-by-zero panic; the zero-ratio guard should return
-    /// `WalkState::Continue` for every directory.
-    #[test]
-    fn test_zero_ratio_does_not_panic() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("sub")).unwrap();
-        let meta = std::fs::metadata(tmp.path()).unwrap();
-        let args = make_args(10_000, 100_000, false);
-
-        // Must not panic; root should at minimum be counted.
-        let count = parallel_search(
-            tmp.path(),
-            &meta,
-            0,
-            &no_shutdown(),
-            &args,
-            &AHashSet::new(),
-        );
-        assert!(count >= 1);
-    }
-
-    /// Bug #9: only directories explicitly listed in `skip_path` must
-    /// be excluded.  With the inverted bug every directory that is
-    /// *not* in the set is skipped instead, so the root itself is
-    /// skipped and the count drops to 0.
-    #[test]
-    fn test_skip_path_skips_only_listed_dirs() {
-        let tmp = TempDir::new().unwrap();
-        let keep = tmp.path().join("keep");
-        let skip_me = tmp.path().join("skip_me");
-        std::fs::create_dir(&keep).unwrap();
-        std::fs::create_dir(&skip_me).unwrap();
-
-        let meta = std::fs::metadata(tmp.path()).unwrap();
-        // Thresholds set high enough that no directory is ever flagged.
-        let args = make_args(u64::MAX, u64::MAX, false);
-
-        let mut skip_set = AHashSet::new();
-        skip_set.insert(skip_me);
-
-        let count = parallel_search(
-            tmp.path(),
-            &meta,
-            1,
-            &no_shutdown(),
-            &args,
-            &skip_set,
-        );
-        // root + keep = 2; skip_me is excluded and not counted.
-        // Bug #9 makes root (not in skip_set) also skip → count = 0.
-        assert_eq!(count, 2);
-    }
-
-    /// Bug #8: with `one_filesystem = true`, directories that reside
-    /// on the *same* device as the scan root must not be skipped.
-    /// The inverted bug skips them (dev() == dev()), pruning the
-    /// entire tree.
-    #[test]
-    fn test_one_filesystem_allows_same_device_dirs() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("sub")).unwrap();
-        let meta = std::fs::metadata(tmp.path()).unwrap();
-        let args = make_args(u64::MAX, u64::MAX, true);
-
-        let count = parallel_search(
-            tmp.path(),
-            &meta,
-            1,
-            &no_shutdown(),
-            &args,
-            &AHashSet::new(),
-        );
-        // Both root and sub share the same device and must be counted.
-        // Bug #8 skips same-device dirs → count falls to 0.
-        assert!(count >= 2);
-    }
-
-    /// Bug #3: an alert-level directory (above `alert_threshold` but
-    /// below `blacklist_threshold`) must return `WalkState::Continue`
-    /// so that its children are still scanned.
-    ///
-    /// This test relies on directories having a non-zero inode size,
-    /// which is guaranteed on Linux but not on macOS/APFS.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_alert_dir_subtree_is_still_scanned() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("child")).unwrap();
-        let meta = std::fs::metadata(tmp.path()).unwrap();
-        // alert=0: every directory with inode size > 0 triggers the
-        // alert branch. blacklist=MAX: nothing is ever blacklisted.
-        // ratio=1: approx_files = raw inode size in bytes.
-        let args = make_args(0, u64::MAX, false);
-
-        let count = parallel_search(
-            tmp.path(),
-            &meta,
-            1,
-            &no_shutdown(),
-            &args,
-            &AHashSet::new(),
-        );
-        // root triggers alert but must Continue; child is then visited.
-        // Bug #3 returns Skip for alert-level dirs → child never seen.
-        assert_eq!(count, 2);
-    }
-
-    /// Bugs #4 and #10: a blacklist-level directory must return
-    /// `WalkState::Skip` so that its subtree is not scanned.
-    ///
-    /// This test relies on directories having a non-zero inode size,
-    /// which is guaranteed on Linux but not on macOS/APFS.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_blacklist_dir_subtree_is_not_scanned() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("child")).unwrap();
-        let meta = std::fs::metadata(tmp.path()).unwrap();
-        // blacklist=1: any directory whose inode size > 1 byte is
-        // blacklisted (Linux directories are typically 4096 bytes).
-        // ratio=1: approx_files = raw inode size in bytes.
-        let args = make_args(0, 1, false);
-
-        let count = parallel_search(
-            tmp.path(),
-            &meta,
-            1,
-            &no_shutdown(),
-            &args,
-            &AHashSet::new(),
-        );
-        // root is blacklisted → Skip → child is never visited.
-        // root itself is counted before Skip is returned.
-        // Bug #4 (Continue instead of Skip) or Bug #10 (wrong branch
-        // order) would both let child be visited → count = 2.
-        assert_eq!(count, 1);
-    }
-
-    /// Bug #15: `approx_files` must be computed as
-    /// `size / size_inode_ratio`, not `size * size_inode_ratio`.
-    ///
-    /// With a large ratio, correct division yields 0 (no threshold
-    /// exceeded); wrong multiplication yields an astronomically large
-    /// value that triggers the blacklist and skips every subtree.
-    ///
-    /// This test relies on directories having a non-zero inode size,
-    /// which is guaranteed on Linux but not on macOS/APFS.
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn test_approx_files_uses_division_not_multiplication() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::create_dir(tmp.path().join("child")).unwrap();
-        let meta = std::fs::metadata(tmp.path()).unwrap();
-        // ratio = 1_000_000: correct → 4096/1_000_000 = 0 (no flag);
-        // bug    → 4096*1_000_000 = 4_096_000_000 >> blacklist (100_000)
-        let args = make_args(0, 100_000, false);
-
-        let count = parallel_search(
-            tmp.path(),
-            &meta,
-            1_000_000,
-            &no_shutdown(),
-            &args,
-            &AHashSet::new(),
-        );
-        // Correct division: approx_files = 0 → no threshold fires →
-        // child is visited → count = 2.
-        // Wrong multiplication: every dir blacklisted → child skipped.
-        assert_eq!(count, 2);
-    }
-}
-
-/// Prints information about directories that exceed specified thresholds.
-///
-/// This function is called when the estimated number of files in a directory exceeds either the alert or blacklist thresholds.
-/// It outputs details about the directory and its file count, and can optionally mark the directory as an offender based on its size.
-///
-/// # Arguments
-/// * `path` - The path of the directory being evaluated.
-/// * `size` - The size of the directory in bytes.
-/// * `file_count` - The estimated number of files in the directory.
-/// * `accurate` - A boolean flag indicating whether the size estimation is considered accurate.
-/// * `red_alert` - A boolean flag indicating whether the directory exceeds the blacklist threshold.
+/// Prints a flagged directory: its inode size and entry count (exact via
+/// `read_dir` when `accurate`, otherwise the estimate), coloured red for a
+/// blacklist hit (`red_alert`) or yellow for an alert.
 #[allow(clippy::cast_precision_loss)]
 fn print_offender(
     full_path: &Path,
@@ -484,4 +226,201 @@ fn print_offender(
             Yellow.paint(human_files)
         }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    use ahash::AHashSet;
+    use tempfile::TempDir;
+
+    use super::parallel_search;
+    use crate::args::Args;
+
+    fn make_args(alert: u64, blacklist: u64, one_fs: bool) -> Arc<Args> {
+        Arc::new(Args {
+            alert_threshold: alert,
+            blacklist_threshold: blacklist,
+            one_filesystem: one_fs,
+            threads: 2,
+            updates: 0,
+            follow_symlinks: false,
+            accurate: false,
+            calibration_count: 100,
+            size_inode_ratio: 0,
+            calibration_path: None,
+            skip_path: vec![],
+            path: vec![],
+        })
+    }
+
+    fn no_shutdown() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
+    /// A `size_inode_ratio` of 0 must not cause a divide-by-zero panic; the
+    /// zero-ratio guard returns `WalkState::Continue` for every directory.
+    #[test]
+    fn test_zero_ratio_does_not_panic() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        let args = make_args(10_000, 100_000, false);
+
+        // Must not panic; root should at minimum be counted.
+        let count = parallel_search(
+            tmp.path(),
+            &meta,
+            0,
+            &no_shutdown(),
+            &args,
+            &AHashSet::new(),
+        )
+        .unwrap();
+        assert!(count >= 1);
+    }
+
+    /// Only directories explicitly listed in `skip_path` are excluded;
+    /// every other directory, including the root, is still counted.
+    #[test]
+    fn test_skip_path_skips_only_listed_dirs() {
+        let tmp = TempDir::new().unwrap();
+        let keep = tmp.path().join("keep");
+        let skip_me = tmp.path().join("skip_me");
+        std::fs::create_dir(&keep).unwrap();
+        std::fs::create_dir(&skip_me).unwrap();
+
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        // Thresholds set high enough that no directory is ever flagged.
+        let args = make_args(u64::MAX, u64::MAX, false);
+
+        let mut skip_set = AHashSet::new();
+        skip_set.insert(skip_me);
+
+        let count = parallel_search(
+            tmp.path(),
+            &meta,
+            1,
+            &no_shutdown(),
+            &args,
+            &skip_set,
+        )
+        .unwrap();
+        // root + keep = 2; skip_me is excluded and not counted.
+        assert_eq!(count, 2);
+    }
+
+    /// With `one_filesystem = true`, directories on the same device as the
+    /// scan root must not be skipped.
+    #[test]
+    fn test_one_filesystem_allows_same_device_dirs() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        let args = make_args(u64::MAX, u64::MAX, true);
+
+        let count = parallel_search(
+            tmp.path(),
+            &meta,
+            1,
+            &no_shutdown(),
+            &args,
+            &AHashSet::new(),
+        )
+        .unwrap();
+        // Both root and sub share the same device and must be counted.
+        assert!(count >= 2);
+    }
+
+    /// An alert-level directory (above `alert_threshold` but below
+    /// `blacklist_threshold`) returns `WalkState::Continue` so its children
+    /// are still scanned.
+    ///
+    /// Relies on directories having a non-zero inode size, which is
+    /// guaranteed on Linux but not on macOS/APFS.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_alert_dir_subtree_is_still_scanned() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("child")).unwrap();
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        // alert=0: every directory with inode size > 0 triggers the
+        // alert branch. blacklist=MAX: nothing is ever blacklisted.
+        // ratio=1: approx_files = raw inode size in bytes.
+        let args = make_args(0, u64::MAX, false);
+
+        let count = parallel_search(
+            tmp.path(),
+            &meta,
+            1,
+            &no_shutdown(),
+            &args,
+            &AHashSet::new(),
+        )
+        .unwrap();
+        // root triggers alert but must Continue; child is then visited.
+        assert_eq!(count, 2);
+    }
+
+    /// A blacklist-level directory returns `WalkState::Skip` so its subtree
+    /// is not scanned.
+    ///
+    /// Relies on directories having a non-zero inode size, which is
+    /// guaranteed on Linux but not on macOS/APFS.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_blacklist_dir_subtree_is_not_scanned() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("child")).unwrap();
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        // blacklist=1: any directory whose inode size > 1 byte is
+        // blacklisted (Linux directories are typically 4096 bytes).
+        // ratio=1: approx_files = raw inode size in bytes.
+        let args = make_args(0, 1, false);
+
+        let count = parallel_search(
+            tmp.path(),
+            &meta,
+            1,
+            &no_shutdown(),
+            &args,
+            &AHashSet::new(),
+        )
+        .unwrap();
+        // root is blacklisted → Skip → child is never visited;
+        // root itself is counted before Skip is returned.
+        assert_eq!(count, 1);
+    }
+
+    /// `approx_files` must be computed as `size / size_inode_ratio`. With a
+    /// large ratio, correct division yields 0 (no threshold exceeded), so
+    /// the child directory is still visited.
+    ///
+    /// Relies on directories having a non-zero inode size, which is
+    /// guaranteed on Linux but not on macOS/APFS.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_approx_files_uses_division_not_multiplication() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("child")).unwrap();
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        // ratio = 1_000_000: correct → 4096/1_000_000 = 0 (no flag);
+        // bug    → 4096*1_000_000 = 4_096_000_000 >> blacklist (100_000)
+        let args = make_args(0, 100_000, false);
+
+        let count = parallel_search(
+            tmp.path(),
+            &meta,
+            1_000_000,
+            &no_shutdown(),
+            &args,
+            &AHashSet::new(),
+        )
+        .unwrap();
+        // Correct division: approx_files = 0 → no threshold fires →
+        // child is visited → count = 2.
+        assert_eq!(count, 2);
+    }
 }

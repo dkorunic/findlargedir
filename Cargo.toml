@@ -29,6 +29,10 @@ signal-hook = "0.4.4"
 ignore = "0.4.25"
 normpath = "1.5.1"
 
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
 [profile.release]
 opt-level = 3
 debug = "none"

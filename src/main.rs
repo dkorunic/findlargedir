@@ -1,5 +1,3 @@
-#![warn(clippy::all, clippy::pedantic)]
-
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,21 +23,9 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-/// Entry point for the filesystem scanning application.
-///
-/// This function sets up necessary configurations and initiates the parallel filesystem scan
-/// by calling `parallel_search`. It handles command-line arguments and sets up the environment
-/// for the application to run.
-///
-/// # Behavior:
-/// - Parses command-line arguments to configure the scanning process.
-/// - Sets up signal handling for graceful shutdowns.
-/// - Initiates the filesystem scan by calling `parallel_search` with appropriate parameters.
-/// - Handles any errors returned by `parallel_search` and exits with an appropriate status code.
-///
-/// # Returns:
-/// - `Ok(())` on successful completion or clean shutdown.
-/// - `Err(...)` if a fatal setup step (metadata, signal handler) fails.
+/// Parses arguments, installs signal handlers, then for each unique path
+/// calibrates the size-to-inode ratio (unless one is supplied) and runs the
+/// parallel scan, printing flagged directories as it goes.
 fn main() -> Result<(), Error> {
     let args = Arc::new(args::Args::parse());
 
@@ -142,7 +128,7 @@ fn main() -> Result<(), Error> {
             &shutdown_walk,
             &args,
             &skip_path_set,
-        );
+        )?;
 
         pb.finish_with_message("Done.");
 
