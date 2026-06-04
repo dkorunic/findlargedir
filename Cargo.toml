@@ -13,7 +13,7 @@ edition = "2024"
 rust-version = "1.88.0"
 
 [dependencies]
-mimalloc = "0.1.50"
+mimalloc = "0.1.52"
 rayon = "1.12.0"
 tempfile = "3.27.0"
 anyhow = "1.0.102"
