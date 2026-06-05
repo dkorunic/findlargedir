@@ -115,61 +115,68 @@ mod tests {
         })
     }
 
-    /// A calibration run cut short by a shutdown signal must return
-    /// `Ok(0)` — not an error and not a non-zero ratio.
-    #[test]
-    fn test_calibration_returns_zero_on_shutdown() {
-        let tmp = TempDir::new().unwrap();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        // Signal shutdown before the function even begins its loop.
-        shutdown.store(true, Ordering::Relaxed);
+    mod get_inode_ratio {
+        use super::*;
 
-        let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(100));
+        /// A calibration run cut short by a shutdown signal must return
+        /// `Ok(0)` — not an error and not a non-zero ratio.
+        #[test]
+        fn returns_zero_on_shutdown() {
+            let tmp = TempDir::new().unwrap();
+            let shutdown = Arc::new(AtomicBool::new(false));
+            // Signal shutdown before the function even begins its loop.
+            shutdown.store(true, Ordering::Relaxed);
 
-        assert_eq!(result.unwrap(), 0);
-    }
+            let result =
+                get_inode_ratio(tmp.path(), &shutdown, &make_args(100));
 
-    /// Sanity: calibration completes without error when no shutdown
-    /// signal is set.
-    #[test]
-    fn test_calibration_completes_without_error() {
-        let tmp = TempDir::new().unwrap();
-        let shutdown = Arc::new(AtomicBool::new(false));
+            assert_eq!(result.unwrap(), 0);
+        }
 
-        let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(10));
+        /// Sanity: calibration completes without error when no shutdown
+        /// signal is set.
+        #[test]
+        fn completes_without_error() {
+            let tmp = TempDir::new().unwrap();
+            let shutdown = Arc::new(AtomicBool::new(false));
 
-        assert!(
-            result.is_ok(),
-            "calibration should succeed when not interrupted"
-        );
-    }
+            let result =
+                get_inode_ratio(tmp.path(), &shutdown, &make_args(10));
 
-    /// The divisor must be `calibration_count`, not `calibration_count - 1`;
-    /// with `count = 1` the latter would divide by zero and panic.
-    #[test]
-    fn test_calibration_divisor_of_one_does_not_panic() {
-        let tmp = TempDir::new().unwrap();
-        let shutdown = Arc::new(AtomicBool::new(false));
+            assert!(
+                result.is_ok(),
+                "calibration should succeed when not interrupted"
+            );
+        }
 
-        let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(1));
+        /// The divisor must be `calibration_count`, not `calibration_count - 1`;
+        /// with `count = 1` the latter would divide by zero and panic.
+        #[test]
+        fn divisor_of_one_does_not_panic() {
+            let tmp = TempDir::new().unwrap();
+            let shutdown = Arc::new(AtomicBool::new(false));
 
-        assert!(result.is_ok(), "calibration_count=1 must not panic");
-    }
+            let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(1));
 
-    /// The parallel iterator must create exactly `calibration_count` files;
-    /// creating fewer while still dividing by `count` inflates the ratio.
-    #[test]
-    fn test_calibration_creates_exact_number_of_files() {
-        let tmp = TempDir::new().unwrap();
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let count: u64 = 5;
+            assert!(result.is_ok(), "calibration_count=1 must not panic");
+        }
 
-        get_inode_ratio(tmp.path(), &shutdown, &make_args(count)).unwrap();
+        /// The parallel iterator must create exactly `calibration_count` files;
+        /// creating fewer while still dividing by `count` inflates the ratio.
+        #[test]
+        fn creates_exact_number_of_files() {
+            let tmp = TempDir::new().unwrap();
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let count: u64 = 5;
 
-        let created = std::fs::read_dir(tmp.path()).unwrap().count() as u64;
-        assert_eq!(
-            created, count,
-            "exactly calibration_count files must be created"
-        );
+            get_inode_ratio(tmp.path(), &shutdown, &make_args(count)).unwrap();
+
+            let created =
+                std::fs::read_dir(tmp.path()).unwrap().count() as u64;
+            assert_eq!(
+                created, count,
+                "exactly calibration_count files must be created"
+            );
+        }
     }
 }

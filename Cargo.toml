@@ -29,9 +29,14 @@ signal-hook = "0.4.4"
 ignore = "0.4.25"
 normpath = "1.5.1"
 
+[lints.rust]
+future-incompatible = { level = "warn", priority = -2 }
+nonstandard_style = { level = "deny", priority = -1 }
+
 [lints.clippy]
-all = "warn"
-pedantic = "warn"
+all = { level = "deny", priority = 10 }
+redundant_clone = { level = "deny", priority = 9 }
+pedantic = { level = "warn", priority = 3 }
 
 [profile.release]
 opt-level = 3
