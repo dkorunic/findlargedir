@@ -9,10 +9,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build
 cargo build --release
 
-# Run tests
+# Run all tests
 cargo test
 
-# Lint (the codebase targets clippy::all + clippy::pedantic)
+# Run a single test (tests are nested: mod tests > mod <fn-under-test>)
+cargo test get_inode_ratio::returns_zero_on_shutdown
+cargo test parallel_search::skip_path_skips_only_listed_dirs
+
+# Lint (lint levels live in Cargo.toml [lints]; the flag is belt-and-suspenders)
 cargo clippy -- -D warnings
 
 # Format (rustfmt.toml enforces max_width=79)
@@ -22,7 +26,9 @@ cargo fmt
 cargo fmt -- --check
 ```
 
-The active Rust toolchain is pinned to **1.93** via `rust-toolchain.toml`. The minimum supported Rust version in `Cargo.toml` is 1.88.0.
+`edition = "2024"`, `rust-version = "1.88.0"` (MSRV). There is **no** `rust-toolchain.toml` — the toolchain is not pinned, so pin it manually if building elsewhere. Lint levels are centralized in `Cargo.toml`'s `[lints]` table (`clippy::all = deny`, `clippy::pedantic = warn`, `clippy::redundant_clone = deny`, `nonstandard_style = deny`).
+
+A sibling `AGENTS.md` carries the same guidance in condensed form; keep the two in sync when editing either.
 
 ## Architecture
 
@@ -31,14 +37,16 @@ The active Rust toolchain is pinned to **1.93** via `rust-toolchain.toml`. The m
 ### Two-phase operation
 
 **Phase 1 — Calibration (`src/calibrate.rs`)**
-Creates `calibration_count` (default 100) empty files in a temporary directory on the target filesystem, then reads the directory's inode size. The ratio `inode_size / calibration_count` gives bytes-per-entry for that specific filesystem. This can be skipped by passing `-i <ratio>` directly.
+Uses a `rayon` thread pool to mass-create `calibration_count` (default 100) empty files in a temporary directory on the target filesystem, then reads the directory's inode size. The ratio `inode_size / calibration_count` gives bytes-per-entry for that specific filesystem. Can be skipped by passing `-i <ratio>` directly, or pointed at a custom dir with `-t`. A `size_inode_ratio` of `0` (e.g. shutdown mid-calibration) disables flagging — `process_dir_entry` guards against the divide-by-zero.
 
 **Phase 2 — Parallel walk (`src/walk.rs`)**
-Uses `ignore::WalkBuilder` (the same engine as ripgrep) to walk the filesystem in parallel. For each directory, it computes `approx_entries = dir_inode_size / size_inode_ratio`. Directories exceeding:
-- `alert_threshold` (default 10 000) → yellow warning, scanning continues
-- `blacklist_threshold` (default 100 000) → red warning, subtree is **skipped** via `WalkState::Skip`
+Uses `ignore::WalkBuilder` (the same engine as ripgrep) to walk the filesystem in parallel; a separate single-thread `rayon` pool prints periodic progress (`-p`). For each directory it computes `approx_entries = dir_inode_size / size_inode_ratio`. Directories **strictly exceeding** (`>`):
+- `alert_threshold` (default 10 000) → yellow warning, scanning continues (`WalkState::Continue`)
+- `blacklist_threshold` (default 100 000) → red warning, subtree is **skipped** (`WalkState::Skip`)
 
-Accurate mode (`-a`) adds a second pass using `std::fs::read_dir` to get exact counts for flagged directories.
+`main.rs` bails at startup if `alert_threshold >= blacklist_threshold` (the yellow branch would be unreachable).
+
+Accurate mode (`-a`) replaces the estimate with an exact `std::fs::read_dir().count()` for each flagged directory.
 
 ### Module layout
 
