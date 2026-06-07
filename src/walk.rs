@@ -21,14 +21,14 @@ thread_local! {
     static FORMATTER: Formatter = Formatter::new();
 }
 
-/// Default number of files in a folder to cause alert
+/// Entry-count estimate above which a directory is flagged (yellow).
 pub const ALERT_COUNT: u64 = 10_000;
 
-/// Default number of files in a folder to cause red alert and further blacklist from the deeper
-/// scan
+/// Entry-count estimate above which a directory is flagged (red) and its
+/// subtree skipped.
 pub const BLACKLIST_COUNT: u64 = 100_000;
 
-/// Default status update period in seconds
+/// Default seconds between progress updates.
 pub const STATUS_SECONDS: u64 = 20;
 
 /// Walks `path` in parallel, flagging directories whose estimated entry
@@ -46,16 +46,14 @@ pub fn parallel_search(
     args: &Args,
     skip_path: &AHashSet<PathBuf>,
 ) -> anyhow::Result<u64> {
-    // Thread pool for status reporting
+    // Single dedicated thread for periodic progress reporting.
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .build()
         .context("Unable to spawn reporting thread pool")?;
 
-    // Processed directory count
     let dir_count = Arc::new(AtomicU64::new(0));
 
-    // Status update thread
     if args.updates > 0 {
         let dir_count = dir_count.clone();
         let sleep_delay = args.updates;
@@ -72,7 +70,6 @@ pub fn parallel_search(
         });
     }
 
-    // Perform target filesystem walking
     WalkBuilder::new(path)
         .hidden(false)
         .standard_filters(false)
@@ -82,7 +79,6 @@ pub fn parallel_search(
         .run(|| {
             let dir_count = dir_count.clone();
             Box::new(move |dir_entry_result| {
-                // Terminate on received interrupt signal
                 if shutdown_walk.load(Ordering::Relaxed) {
                     return WalkState::Quit;
                 }
@@ -127,7 +123,7 @@ fn process_dir_entry(
 
     let full_path = dir_entry.path();
 
-    // Ignore skip paths, typically being virtual filesystems (/proc, /dev, /sys, /run)
+    // User-excluded dirs, typically virtual filesystems (/proc, /sys, /dev).
     if !skip_path.is_empty() && skip_path.contains(full_path) {
         println!(
             "Skipping further scan at {} as requested",
@@ -137,14 +133,11 @@ fn process_dir_entry(
         return WalkState::Skip;
     }
 
-    // Retrieve Unix metadata for a given directory
     let Ok(dir_entry_metadata) = dir_entry.metadata() else {
         return WalkState::Continue;
     };
 
-    // If `one_filesystem` flag has been set and if directory is not residing
-    // on the same device as top search path, print warning and abort deeper
-    // scanning
+    // Don't cross mount points when confined to one filesystem.
     if args.one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev())
     {
         println!(
@@ -155,17 +148,16 @@ fn process_dir_entry(
         return WalkState::Skip;
     }
 
-    // Count only directories that pass all filters and are actually analyzed
+    // Counts only directories that survive every filter above.
     dir_count.fetch_add(1, Ordering::Relaxed);
 
-    // Identify size and calculate approximate directory entry count
     let size = dir_entry_metadata.size();
+    // A zero ratio (interrupted calibration) disables flagging entirely.
     if size_inode_ratio == 0 {
         return WalkState::Continue;
     }
     let approx_files = size / size_inode_ratio;
 
-    // Print count warnings if necessary
     if approx_files > args.blacklist_threshold {
         print_offender(full_path, size, approx_files, args.accurate, true);
 
@@ -190,7 +182,6 @@ fn print_offender(
     accurate: bool,
     red_alert: bool,
 ) {
-    // Pretty print either the accurate directory count or the approximation
     let human_files = if accurate {
         let exact_files = match read_dir(full_path) {
             Ok(r) => r.count() as u64,

@@ -68,7 +68,7 @@ pub struct Args {
     pub path: Vec<PathBuf>,
 }
 
-/// Parse and validate threads option
+/// Rejects thread counts outside `2..=65535`.
 fn parse_threads(x: &str) -> Result<usize, Error> {
     let v = x.parse::<usize>()?;
     if (2..=65535).contains(&v) {
@@ -78,16 +78,8 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
     }
 }
 
-/// Parses a string into a `PathBuf`, checking if the path is a directory and exists.
-///
-/// # Arguments
-///
-/// * `x` - A string slice to be parsed into a `PathBuf`.
-///
-/// # Returns
-///
-/// * `Result<PathBuf, Error>` - An `Ok` variant containing a normalized `PathBuf` if the path is an existing directory,
-///   or an `Err` variant with an error message if the path does not exist or is not a directory.
+/// Normalises a search root, rejecting anything that is not an existing
+/// directory so the walk never starts from a missing or non-dir path.
 fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     let p = Path::new(x);
 

@@ -5,18 +5,11 @@ use anyhow::{Context, Error};
 use signal_hook::consts::TERM_SIGNALS;
 use signal_hook::flag::register;
 
-/// Sets up a handler for process interruption signals (each signal in `TERM_SIGNALS`).
-/// This function configures a handler that will set a shared atomic boolean to `true`
-/// whenever an interruption signal is received, indicating that the process should shut down.
-///
-/// # Arguments
-/// * `shutdown` - An `&Arc<AtomicBool>` shared among threads, used to signal shutdown when set to `true`.
-///
-/// # Returns
-/// Returns `Ok(())` if the handler is successfully set, or an `Error` if any issues occur during setup.
+/// Wires every terminating signal in `TERM_SIGNALS` to flip `shutdown`, giving
+/// the calibration and walk loops a single flag to poll for graceful exit.
 ///
 /// # Errors
-/// Returns an error if the signal handler cannot be set, encapsulated in an `anyhow::Error`.
+/// Fails if a signal handler cannot be registered.
 pub fn setup_interrupt_handler(
     shutdown: &Arc<AtomicBool>,
 ) -> Result<(), Error> {

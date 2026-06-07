@@ -10,29 +10,20 @@ use rayon::prelude::*;
 
 use crate::{args, progress};
 
-/// Default number of files to create in the calibration directory
+/// Default number of files to create during calibration.
 pub const DEFAULT_TEST_COUNT: u64 = 100;
 
-/// Calculates the size-to-inode ratio for a given directory.
+/// Derives a filesystem's bytes-per-directory-entry by creating
+/// `calibration_count` files in `test_path` and dividing the directory's
+/// resulting inode size by that count. This ratio lets the walk estimate entry
+/// counts from a single `stat` instead of an expensive `readdir`.
 ///
-/// This function initiates a calibration process by creating a specified number of files
-/// within the `test_path` directory to determine the average file size to inode ratio.
-/// It uses a multi-threaded approach to create files and monitors for a shutdown signal
-/// to safely terminate and clean up if necessary.
-///
-/// # Arguments
-/// * `test_path` - A reference to the path where test files will be created.
-/// * `shutdown` - A shared atomic boolean to signal shutdown and cleanup.
-/// * `args` - A shared structure containing runtime arguments such as the number of threads
-///   and the number of files to create for calibration.
-///
-/// # Returns
-/// Returns a `Result<u64, Error>` which is the calculated size-to-inode ratio if successful,
-/// or an error if the operation fails at any step.
+/// Returns `Ok(0)` if interrupted mid-calibration, which the caller treats as
+/// "flagging disabled" rather than a real ratio.
 ///
 /// # Errors
-/// This function can return an error if it fails to create the thread pool, create files,
-/// or retrieve metadata from the test directory.
+/// Fails if the thread pool cannot be built, a file cannot be created, or the
+/// directory metadata cannot be read.
 pub fn get_inode_ratio(
     test_path: &Path,
     shutdown: &Arc<AtomicBool>,
@@ -40,7 +31,6 @@ pub fn get_inode_ratio(
 ) -> Result<u64, Error> {
     println!("Starting test directory calibration in {}", test_path.display());
 
-    // Thread pool for mass file creation
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(args.threads)
         .build()
@@ -48,7 +38,7 @@ pub fn get_inode_ratio(
 
     let pb = progress::new_spinner("Creating test files in progress...");
 
-    // Mass create files; filenames are short to get minimal size to inode ratio
+    // Short filenames keep per-entry inode cost minimal, sharpening the ratio.
     let res: Result<(), Error> = pool.install(|| {
         (0..args.calibration_count).into_par_iter().try_for_each(|i| {
             if shutdown.load(Ordering::Relaxed) {
@@ -71,8 +61,7 @@ pub fn get_inode_ratio(
         return Err(e);
     }
 
-    // Terminate on received interrupt signal; TempDir owned by the caller
-    // is dropped automatically, so no explicit cleanup is needed here.
+    // Caller's TempDir cleans itself up on drop, so bailing out here is safe.
     if shutdown.load(Ordering::Relaxed) {
         return Ok(0);
     }

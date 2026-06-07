@@ -2,24 +2,14 @@ use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-/// Default tick chars
+/// Spinner animation frames.
 const PROGRESS_CHARS: &str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
-/// Default tick in milliseconds
+/// Spinner tick interval in milliseconds.
 const PROGRESS_TICK: u64 = 80;
 
-/// Initializes a new `ProgressBar` with a spinner style.
-///
-/// # Arguments
-/// * `msg` - A message of generic type `S` that implements `Into<String>`, which will be displayed on the spinner.
-///
-/// # Returns
-/// Returns a `ProgressBar` object configured with a steady tick and custom spinner style.
-///
-/// # Examples
-/// ```text
-/// let spinner = new_spinner("Loading...");
-/// ```
+/// Builds a self-ticking spinner so long phases (calibration, walking) show
+/// liveness without the caller having to pump progress updates.
 pub fn new_spinner<S>(msg: S) -> ProgressBar
 where
     S: Into<String>,
