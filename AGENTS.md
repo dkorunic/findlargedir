@@ -36,3 +36,4 @@ Edition 2024, MSRV 1.88–1.93. No `rust-toolchain.toml` — pin toolchain manua
 - `-a` (accurate mode) triggers `std::fs::read_dir` on flagged dirs — heavy I/O.
 - Calibration creates `calibration_count` (default 100) temporary files and deletes them. Requires r/w on target filesystem.
 - No `tests/` directory; integration test strategy is not in-tree.
+- **I/O-bound, not CPU-bound.** Runtime is dominated by per-directory `stat` + `readdir` syscalls; profiling shows ~95 % of cold-cache wall time blocked on disk and ~77 % kernel even warm, with the core heuristic below the noise floor. Don't micro-optimize the per-dir arithmetic — the only real levers are reducing syscalls (the `WalkState::Skip` on blacklisted subtrees) and the walk framework. Measure (perf/flamegraph) before optimizing.
