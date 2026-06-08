@@ -31,6 +31,15 @@ crossbeam-deque = "0.8"
 crossbeam-utils = "0.8"
 rustix = { version = "1", features = ["fs"] }
 
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = [
+    "cargo_bench_support",
+] }
+
+[[bench]]
+name = "walk"
+harness = false
+
 [lints.rust]
 future-incompatible = { level = "warn", priority = -2 }
 nonstandard_style = { level = "deny", priority = -1 }

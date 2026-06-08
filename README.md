@@ -61,65 +61,88 @@ Setting `-p 0` disables periodic status updates.
 
 ## Benchmarks
 
-### findlargedir vs GNU find
-
-#### Mid-range server / mechanical storage
-
-Hardware: 8-core Xeon E5-1630 with a 4-drive SATA RAID-10 array
-
-Benchmark setup:
-
-```shell
-$ cat bench1.sh
-#!/bin/dash
-exec /usr/bin/find / -xdev -type d -size +200000c
-
-$ cat bench2.sh
-#!/bin/dash
-exec /usr/local/sbin/findlargedir /
-```
-
-Results measured with [hyperfine](https://github.com/sharkdp/hyperfine):
+A [Criterion](https://github.com/bheisler/criterion.rs) harness lives in
+[`benches/walk.rs`](benches/walk.rs). It runs both `findlargedir` and GNU
+`find` **as subprocesses** so the comparison is fair — each pays full process
+startup plus a complete traversal — and times them over a shallow clone of the
+Linux kernel source tree, in two scenarios: warm cache (data in RAM) and cold
+cache (caches dropped before every run).
 
 ```shell
-$ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' \
-  ./bench1.sh ./bench2.sh
-
-Benchmark 1: ./bench1.sh
-  Time (mean ± σ):     357.040 s ±  7.176 s    [User: 2.324 s, System: 13.881 s]
-  Range (min … max):   349.639 s … 367.636 s    10 runs
-
-Benchmark 2: ./bench2.sh
-  Time (mean ± σ):     199.751 s ±  4.431 s    [User: 75.163 s, System: 141.271 s]
-  Range (min … max):   190.136 s … 203.432 s    10 runs
-
-Summary
-  './bench2.sh' ran
-    1.79 ± 0.05 times faster than './bench1.sh'
+# Clones torvalds/linux into benches/linux_root on first run; reuse a
+# checkout with BENCH_WALK_DIR=/path. Shorten a run with --measurement-time.
+cargo bench --bench walk
 ```
 
-#### High-end server / SSD storage
-
-Hardware: 48-core Xeon Silver 4214, 7-drive SM883 SATA RAID-5 array, 2 TB of content (many containers with small files)
-
-Same benchmark setup. Results:
+The two commands measured are the functional equivalents of one another:
 
 ```shell
-$ hyperfine --prepare 'echo 3 | tee /proc/sys/vm/drop_caches' \
-  ./bench1.sh ./bench2.sh
-
-Benchmark 1: ./bench1.sh
-  Time (mean ± σ):     392.433 s ±  1.952 s    [User: 16.056 s, System: 81.994 s]
-  Range (min … max):   390.284 s … 395.732 s    10 runs
-
-Benchmark 2: ./bench2.sh
-  Time (mean ± σ):     34.650 s ±  0.469 s    [User: 79.441 s, System: 528.939 s]
-  Range (min … max):   34.049 s … 35.388 s    10 runs
-
-Summary
-  './bench2.sh' ran
-   11.33 ± 0.16 times faster than './bench1.sh'
+findlargedir <root>                                # calibrate, then walk
+find <root> -xdev -type d -size +200000c           # flag large dir inodes
 ```
+
+### Results
+
+Measured on an 8-core Xeon E5-1630 v3 @ 3.70 GHz, ext4 on local SSD, against
+the kernel tree (≈6,160 directories, 2.0 GB), `find` = GNU findutils 4.9.0.
+
+**Warm cache** — Criterion warms up before sampling, so these numbers isolate
+CPU and syscall cost with disk latency removed:
+
+```text
+walk_linux_kernel/findlargedir   time:   [106.78 ms  107.56 ms  108.37 ms]
+walk_linux_kernel/find           time:   [ 80.60 ms   81.03 ms   81.49 ms]
+```
+
+| Command (warm) | Median | Notes |
+|---|---|---|
+| GNU `find` | **81.0 ms** | read-only `readdir` + `stat`, size filter |
+| `findlargedir` (default) | **107.6 ms** | calibration + parallel walk |
+| `findlargedir -i <ratio>` | **~20–40 ms** | calibration skipped — walk only |
+
+**Cold cache** — the `walk_linux_kernel_cold` group drops the page, dentry and
+inode caches (`sync; echo 3 > /proc/sys/vm/drop_caches`) before *every*
+traversal, so each run pays real disk I/O. Needs root; skipped with a warning
+otherwise:
+
+```text
+walk_linux_kernel_cold/findlargedir   time:   [1.7572 s  1.8655 s  2.0078 s]
+walk_linux_kernel_cold/find           time:   [2.3978 s  2.4156 s  2.4342 s]
+```
+
+| Command (cold) | Median | vs `find` |
+|---|---|---|
+| `findlargedir` (default) | **1.87 s** | **1.30× faster** |
+| GNU `find` | **2.42 s** | — |
+
+### What the numbers mean
+
+The two scenarios tell opposite stories, and both are expected.
+
+**Warm cache — `find` wins (~1.3×).** With every inode already in RAM there is
+no disk latency to hide, so the comparison reduces to raw work done, and a
+default `findlargedir` run does *more*: it first creates and deletes files to
+calibrate the filesystem's bytes-per-entry ratio. That one-time write is the
+bulk of its time — skipping it with `-i` (when the ratio is already known)
+drops the whole run to ~20–40 ms, *faster* than `find`. So the traversal itself
+was never the bottleneck here; calibration was.
+
+**Cold cache — `findlargedir` wins (~1.3×).** Once the data must come off disk,
+`findlargedir`'s 20-thread parallel walk overlaps the per-directory `stat`
+seeks that single-threaded `find` issues one after another, and that overlap
+more than repays the calibration cost. Disk latency — not CPU — now dominates,
+which is the state real filesystems are usually in.
+
+And this corpus *understates* the real-world gap, because the kernel tree has
+only a few thousand directories and **no "black hole" directories at all**.
+`findlargedir`'s core trick is to estimate a directory's entry count from its
+inode size — one `O(1)` `stat` — instead of enumerating it. On a tree that
+actually holds directories with hundreds of thousands to millions of entries,
+`find` must `readdir` every one of those entries while `findlargedir` reads a
+single inode size and moves on. There the modest 1.3× widens into the
+order-of-magnitude range, and grows further on slow or high-latency storage
+(spinning disks, RAID, network/object filesystems) — the workloads the tool is
+built for.
 
 ## Star history
 

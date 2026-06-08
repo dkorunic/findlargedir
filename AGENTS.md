@@ -9,6 +9,7 @@ cargo fmt           # rustfmt.toml: max_width=79 + use_small_heuristics="max"
 cargo clippy -- -D warnings
 cargo test
 cargo build --release
+cargo bench --bench walk   # findlargedir vs GNU find; clones Linux kernel into benches/linux_root (BENCH_WALK_DIR to reuse). Warm + cold groups; cold drops caches via /proc/sys/vm/drop_caches (needs root, else skipped)
 ```
 
 ## Pinning

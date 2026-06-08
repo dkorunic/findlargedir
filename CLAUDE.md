@@ -24,6 +24,15 @@ cargo fmt
 
 # Check formatting without modifying
 cargo fmt -- --check
+
+# Benchmark findlargedir vs GNU find (Criterion, harness = false)
+# Heavy: shallow-clones the Linux kernel into benches/linux_root on first run.
+# Set BENCH_WALK_DIR to reuse a checkout; shorten a run with --measurement-time.
+# Two groups: walk_linux_kernel (warm) and walk_linux_kernel_cold (drops caches
+# via /proc/sys/vm/drop_caches each run — needs root, else skipped with a warning).
+cargo bench --bench walk
+cargo bench --bench walk -- --measurement-time 20
+cargo bench --bench walk -- walk_linux_kernel_cold   # cold-cache group only (root)
 ```
 
 `edition = "2024"`, `rust-version = "1.88.0"` (MSRV). There is **no** `rust-toolchain.toml` — the toolchain is not pinned, so pin it manually if building elsewhere. Lint levels are centralized in `Cargo.toml`'s `[lints]` table (`clippy::all = deny`, `clippy::pedantic = warn`, `clippy::redundant_clone = deny`, `nonstandard_style = deny`).
