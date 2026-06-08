@@ -14,7 +14,7 @@
 
 Such directories mostly **cannot shrink back** even after their contents are cleaned up, because most Linux and Unix filesystems do not support directory inode shrinking (ext3/ext4 being a prime example). This situation commonly arises with forgotten web session directories (e.g. PHP session folders with GC intervals set to several days), CMS cache and compiled template directories, or POSIX filesystem emulations over object storage.
 
-The program identifies these directories using **calibration** — it measures how many directory entries correspond to each byte of inode size on the target filesystem, then uses that ratio to quickly scan without performing expensive full directory reads. While many tools exist to scan filesystems (`find`, `du`, `ncdu`, etc.), none of them use heuristics to skip expensive lookups because they are designed for **full accuracy**. This tool is instead designed to use heuristics and alert on problems **without getting stuck** on the very directories it is trying to find.
+The program identifies these directories using **calibration** — it creates files in a temporary directory on the target filesystem and fits a line to how the directory's inode size grows, recovering the marginal bytes-per-entry cost (and fixed overhead) for that filesystem. It then estimates each directory's entry count from a single `stat`, scanning without performing expensive full directory reads. While many tools exist to scan filesystems (`find`, `du`, `ncdu`, etc.), none of them use heuristics to skip expensive lookups because they are designed for **full accuracy**. This tool is instead designed to use heuristics and alert on problems **without getting stuck** on the very directories it is trying to find.
 
 By default, the program **does not follow symlinks** (use `-f` to enable) and **requires read/write permissions** on the filesystem being calibrated, in order to create temporary files and measure the resulting inode size.
 
@@ -39,10 +39,10 @@ Options:
   -f, --follow-symlinks <FOLLOW_SYMLINKS>          Follow symlinks [default: false] [possible values: true, false]
   -a, --accurate <ACCURATE>                        Perform accurate directory entry counting [default: false] [possible values: true, false]
   -o, --one-filesystem <ONE_FILESYSTEM>            Do not cross mount points [default: true] [possible values: true, false]
-  -c, --calibration-count <CALIBRATION_COUNT>      Calibration directory file count [default: 100]
+  -c, --calibration-count <CALIBRATION_COUNT>      Calibration batch size (raised to a 1000-file minimum) [default: 100]
   -A, --alert-threshold <ALERT_THRESHOLD>          Alert threshold count (print the estimate) [default: 10000]
   -B, --blacklist-threshold <BLACKLIST_THRESHOLD>  Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
-  -x, --threads <THREADS>                          Number of threads to use when calibrating and scanning [default: 20]
+  -x, --threads <THREADS>                          Number of threads to use when calibrating and scanning (2..=65535) [default: 20]
   -p, --updates <UPDATES>                          Seconds between status updates, set to 0 to disable [default: 20]
   -i, --size-inode-ratio <SIZE_INODE_RATIO>        Skip calibration and provide directory entry to inode size ratio (typically ~21-32) [default: 0]
   -t, --calibration-path <CALIBRATION_PATH>        Custom calibration directory path

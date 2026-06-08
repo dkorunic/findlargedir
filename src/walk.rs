@@ -9,17 +9,19 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::thread::sleep;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use ahash::AHashSet;
 use ansi_term::Colour::{Green, Red, Yellow};
-use anyhow::Context;
 use human_format::Formatter;
-use ignore::{DirEntry, Error, WalkBuilder, WalkState};
 use indicatif::HumanBytes;
 
 use crate::args::Args;
+use crate::calibrate::Calibration;
+
+mod engine;
 
 thread_local! {
     static FORMATTER: Formatter = Formatter::new();
@@ -39,93 +41,76 @@ pub const STATUS_SECONDS: u64 = 20;
 /// count exceeds the alert/blacklist thresholds, and returns the number of
 /// directories analyzed. A blacklisted subtree is skipped, and the walk
 /// stops early once `shutdown_walk` is set.
-///
-/// # Errors
-/// Returns an error if the status-reporting thread pool cannot be built.
 pub fn parallel_search(
     path: &Path,
     path_metadata: &Metadata,
-    size_inode_ratio: u64,
+    calibration: Calibration,
     shutdown_walk: &Arc<AtomicBool>,
     args: &Args,
     skip_path: &AHashSet<PathBuf>,
-) -> anyhow::Result<u64> {
-    // Single dedicated thread for periodic progress reporting.
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(1)
-        .build()
-        .context("Unable to spawn reporting thread pool")?;
-
+) -> u64 {
     let dir_count = Arc::new(AtomicU64::new(0));
 
-    if args.updates > 0 {
+    // Periodic progress on a dedicated thread. The channel doubles as a stop
+    // signal: dropping the sender after the walk wakes the thread immediately
+    // (via `Disconnected`), so it never lingers printing a stale count into a
+    // later scan root.
+    let progress = (args.updates > 0).then(|| {
         let dir_count = dir_count.clone();
         let sleep_delay = args.updates;
-
-        pool.spawn(move || loop {
-            sleep(Duration::from_secs(sleep_delay));
-
-            let count = dir_count.load(Ordering::Relaxed);
-            println!(
-                "Processed {} directories so far, next update in {} seconds",
-                Green.paint(count.to_string()),
-                sleep_delay
-            );
+        let (tx, rx) = mpsc::channel::<()>();
+        let handle = thread::spawn(move || {
+            while matches!(
+                rx.recv_timeout(Duration::from_secs(sleep_delay)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                let count = dir_count.load(Ordering::Relaxed);
+                println!(
+                    "Processed {} directories so far, next update in {} seconds",
+                    Green.paint(count.to_string()),
+                    sleep_delay
+                );
+            }
         });
+        (tx, handle)
+    });
+
+    let root_dev = path_metadata.dev();
+    let classify = |info: engine::DirInfo| {
+        classify_dir(&info, root_dev, calibration, args, skip_path, &dir_count)
+    };
+
+    engine::walk_dirs(
+        path,
+        args.threads,
+        args.follow_symlinks,
+        shutdown_walk,
+        classify,
+    );
+
+    // Stop and join the progress thread before returning.
+    if let Some((tx, handle)) = progress {
+        drop(tx);
+        let _ = handle.join();
     }
 
-    WalkBuilder::new(path)
-        .hidden(false)
-        .standard_filters(false)
-        .follow_links(args.follow_symlinks)
-        .threads(args.threads)
-        .build_parallel()
-        .run(|| {
-            let dir_count = dir_count.clone();
-            Box::new(move |dir_entry_result| {
-                if shutdown_walk.load(Ordering::Relaxed) {
-                    return WalkState::Quit;
-                }
-
-                process_dir_entry(
-                    path_metadata,
-                    size_inode_ratio,
-                    &dir_entry_result,
-                    skip_path,
-                    args,
-                    &dir_count,
-                )
-            })
-        });
-
-    Ok(dir_count.load(Ordering::Relaxed))
+    dir_count.load(Ordering::Relaxed)
 }
 
-/// Classifies a single directory entry and returns the resulting
-/// [`WalkState`]: skips entries listed in `skip_path`, skips filesystem
-/// boundaries under `--one-filesystem`, and flags directories whose
-/// estimated entry count (`size / size_inode_ratio`) crosses the alert or
-/// blacklist thresholds. Non-directory entries and a zero ratio yield
-/// `WalkState::Continue`.
-fn process_dir_entry(
-    path_metadata: &Metadata,
-    size_inode_ratio: u64,
-    dir_entry_result: &Result<DirEntry, Error>,
-    skip_path: &AHashSet<PathBuf>,
+/// Classifies a single directory and returns the resulting
+/// [`engine::Decision`]: skips entries listed in `skip_path`, skips filesystem
+/// boundaries under `--one-filesystem`, and flags directories whose estimated
+/// entry count (`(size − overhead) / per_entry`) crosses the alert or blacklist
+/// thresholds. A blacklist hit returns `Skip`; everything else `Descend`.
+fn classify_dir(
+    info: &engine::DirInfo,
+    root_dev: u64,
+    calibration: Calibration,
     args: &Args,
+    skip_path: &AHashSet<PathBuf>,
     dir_count: &AtomicU64,
-) -> WalkState {
-    let Ok(dir_entry) = dir_entry_result else {
-        return WalkState::Continue;
-    };
-    let Some(dir_entry_type) = dir_entry.file_type() else {
-        return WalkState::Continue;
-    };
-    if !dir_entry_type.is_dir() {
-        return WalkState::Continue;
-    }
-
-    let full_path = dir_entry.path();
+) -> engine::Decision {
+    let full_path = info.path;
 
     // User-excluded dirs, typically virtual filesystems (/proc, /sys, /dev).
     if !skip_path.is_empty() && skip_path.contains(full_path) {
@@ -134,45 +119,51 @@ fn process_dir_entry(
             full_path.display()
         );
 
-        return WalkState::Skip;
+        return engine::Decision::Skip;
     }
 
-    let Ok(dir_entry_metadata) = dir_entry.metadata() else {
-        return WalkState::Continue;
-    };
-
     // Don't cross mount points when confined to one filesystem.
-    if args.one_filesystem && (dir_entry_metadata.dev() != path_metadata.dev())
-    {
+    if args.one_filesystem && info.dev != root_dev {
         println!(
             "Identified filesystem boundary at {}, skipping...",
             full_path.display()
         );
 
-        return WalkState::Skip;
+        return engine::Decision::Skip;
     }
 
     // Counts only directories that survive every filter above.
     dir_count.fetch_add(1, Ordering::Relaxed);
 
-    let size = dir_entry_metadata.size();
-    // A zero ratio (interrupted calibration) disables flagging entirely.
-    if size_inode_ratio == 0 {
-        return WalkState::Continue;
+    // A zero per-entry cost (interrupted or degenerate calibration) disables
+    // flagging entirely.
+    if calibration.per_entry == 0 {
+        return engine::Decision::Descend;
     }
-    let approx_files = size / size_inode_ratio;
+    let approx_files =
+        info.size.saturating_sub(calibration.overhead) / calibration.per_entry;
 
     if approx_files > args.blacklist_threshold {
-        print_offender(full_path, size, approx_files, args.accurate, true);
+        print_offender(
+            full_path,
+            info.size,
+            approx_files,
+            args.accurate,
+            true,
+        );
 
-        return WalkState::Skip;
+        return engine::Decision::Skip;
     } else if approx_files > args.alert_threshold {
-        print_offender(full_path, size, approx_files, args.accurate, false);
-
-        return WalkState::Continue;
+        print_offender(
+            full_path,
+            info.size,
+            approx_files,
+            args.accurate,
+            false,
+        );
     }
 
-    WalkState::Continue
+    engine::Decision::Descend
 }
 
 /// Prints a flagged directory: its inode size and entry count (exact via
@@ -217,14 +208,16 @@ fn print_offender(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     use ahash::AHashSet;
     use tempfile::TempDir;
 
-    use super::parallel_search;
+    use super::{classify_dir, engine, parallel_search};
     use crate::args::Args;
+    use crate::calibrate::Calibration;
 
     fn make_args(alert: u64, blacklist: u64, one_fs: bool) -> Arc<Args> {
         Arc::new(Args {
@@ -247,11 +240,167 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
 
+    mod classify_dir {
+        use super::*;
+
+        fn cal(per_entry: u64, overhead: u64) -> Calibration {
+            Calibration { per_entry, overhead }
+        }
+
+        /// Overhead is subtracted before dividing: a directory whose *raw* size
+        /// would blacklist is not skipped once the fixed overhead is removed.
+        /// Guards against dropping the subtraction or using the wrong field.
+        #[test]
+        fn overhead_is_subtracted_before_dividing() {
+            // per_entry=1, blacklist=100, alert never fires.
+            // (1050-1000)/1 = 50 (≤100) → Descend; raw 1050 would Skip.
+            let args = make_args(u64::MAX, 100, false);
+            let count = AtomicU64::new(0);
+            let info =
+                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 1050 };
+            let d = classify_dir(
+                &info,
+                0,
+                cal(1, 1000),
+                &args,
+                &AHashSet::new(),
+                &count,
+            );
+            assert!(matches!(d, engine::Decision::Descend));
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+        }
+
+        /// Overhead larger than the size saturates to 0 — no underflow panic,
+        /// nothing flagged.
+        #[test]
+        fn overhead_exceeding_size_saturates_to_zero() {
+            let args = make_args(0, 100, false);
+            let count = AtomicU64::new(0);
+            let info =
+                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 5000 };
+            let d = classify_dir(
+                &info,
+                0,
+                cal(1, u64::MAX),
+                &args,
+                &AHashSet::new(),
+                &count,
+            );
+            assert!(matches!(d, engine::Decision::Descend));
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+        }
+
+        /// The blacklist comparison is strictly `>`: an estimate equal to the
+        /// threshold descends; one above it skips the subtree.
+        #[test]
+        fn blacklist_threshold_is_exclusive() {
+            let args = make_args(u64::MAX, 100, false);
+            let skip = AHashSet::new();
+            let eq = AtomicU64::new(0);
+            let at_eq =
+                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 100 };
+            assert!(matches!(
+                classify_dir(&at_eq, 0, cal(1, 0), &args, &skip, &eq),
+                engine::Decision::Descend
+            ));
+            let above = AtomicU64::new(0);
+            let at_gt =
+                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 101 };
+            assert!(matches!(
+                classify_dir(&at_gt, 0, cal(1, 0), &args, &skip, &above),
+                engine::Decision::Skip
+            ));
+        }
+
+        /// A listed skip path is skipped and not counted.
+        #[test]
+        fn skip_path_returns_skip_uncounted() {
+            let args = make_args(u64::MAX, u64::MAX, false);
+            let p = std::path::PathBuf::from("/skip/me");
+            let mut skip = AHashSet::new();
+            skip.insert(p.clone());
+            let count = AtomicU64::new(0);
+            let info = engine::DirInfo { path: &p, dev: 0, size: 9999 };
+            let d = classify_dir(&info, 0, cal(1, 0), &args, &skip, &count);
+            assert!(matches!(d, engine::Decision::Skip));
+            assert_eq!(count.load(Ordering::Relaxed), 0);
+        }
+
+        /// Under one-filesystem, a directory on a different device than the
+        /// root is skipped and not counted.
+        #[test]
+        fn foreign_device_skipped_uncounted_under_one_fs() {
+            let args = make_args(u64::MAX, u64::MAX, true);
+            let count = AtomicU64::new(0);
+            let info = engine::DirInfo {
+                path: Path::new("/mnt"),
+                dev: 99,
+                size: 9999,
+            };
+            let d = classify_dir(
+                &info,
+                1,
+                cal(1, 0),
+                &args,
+                &AHashSet::new(),
+                &count,
+            );
+            assert!(matches!(d, engine::Decision::Skip));
+            assert_eq!(count.load(Ordering::Relaxed), 0);
+        }
+
+        /// A zero `per_entry` (interrupted/degenerate calibration) disables
+        /// flagging and never divides, even with zero thresholds.
+        #[test]
+        fn zero_per_entry_descends_without_flagging() {
+            let args = make_args(0, 0, false);
+            let count = AtomicU64::new(0);
+            let info = engine::DirInfo {
+                path: Path::new("/d"),
+                dev: 0,
+                size: u64::MAX,
+            };
+            let d = classify_dir(
+                &info,
+                0,
+                cal(0, 0),
+                &args,
+                &AHashSet::new(),
+                &count,
+            );
+            assert!(matches!(d, engine::Decision::Descend));
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+        }
+
+        /// Accurate mode counts entries via `read_dir`; exercise that path on a
+        /// real flagged directory without panicking.
+        #[test]
+        fn accurate_mode_reads_real_dir() {
+            let tmp = TempDir::new().unwrap();
+            std::fs::create_dir(tmp.path().join("child")).unwrap();
+            let mut args = (*make_args(0, u64::MAX, false)).clone();
+            args.accurate = true;
+            let count = AtomicU64::new(0);
+            let info =
+                engine::DirInfo { path: tmp.path(), dev: 0, size: 4096 };
+            let d = classify_dir(
+                &info,
+                0,
+                cal(1, 0),
+                &args,
+                &AHashSet::new(),
+                &count,
+            );
+            assert!(matches!(d, engine::Decision::Descend));
+            assert_eq!(count.load(Ordering::Relaxed), 1);
+        }
+    }
+
     mod parallel_search {
         use super::*;
 
         /// A `size_inode_ratio` of 0 must not cause a divide-by-zero panic; the
-        /// zero-ratio guard returns `WalkState::Continue` for every directory.
+        /// zero-ratio guard returns `Decision::Descend` for every directory.
         #[test]
         fn zero_ratio_does_not_panic() {
             let tmp = TempDir::new().unwrap();
@@ -263,12 +412,11 @@ mod tests {
             let count = parallel_search(
                 tmp.path(),
                 &meta,
-                0,
+                Calibration { per_entry: 0, overhead: 0 },
                 &no_shutdown(),
                 &args,
                 &AHashSet::new(),
-            )
-            .unwrap();
+            );
             assert!(count >= 1);
         }
 
@@ -292,12 +440,11 @@ mod tests {
             let count = parallel_search(
                 tmp.path(),
                 &meta,
-                1,
+                Calibration { per_entry: 1, overhead: 0 },
                 &no_shutdown(),
                 &args,
                 &skip_set,
-            )
-            .unwrap();
+            );
             // root + keep = 2; skip_me is excluded and not counted.
             assert_eq!(count, 2);
         }
@@ -314,18 +461,17 @@ mod tests {
             let count = parallel_search(
                 tmp.path(),
                 &meta,
-                1,
+                Calibration { per_entry: 1, overhead: 0 },
                 &no_shutdown(),
                 &args,
                 &AHashSet::new(),
-            )
-            .unwrap();
+            );
             // Both root and sub share the same device and must be counted.
             assert!(count >= 2);
         }
 
         /// An alert-level directory (above `alert_threshold` but below
-        /// `blacklist_threshold`) returns `WalkState::Continue` so its children
+        /// `blacklist_threshold`) returns `Decision::Descend` so its children
         /// are still scanned.
         ///
         /// Relies on directories having a non-zero inode size, which is
@@ -344,17 +490,16 @@ mod tests {
             let count = parallel_search(
                 tmp.path(),
                 &meta,
-                1,
+                Calibration { per_entry: 1, overhead: 0 },
                 &no_shutdown(),
                 &args,
                 &AHashSet::new(),
-            )
-            .unwrap();
+            );
             // root triggers alert but must Continue; child is then visited.
             assert_eq!(count, 2);
         }
 
-        /// A blacklist-level directory returns `WalkState::Skip` so its subtree
+        /// A blacklist-level directory returns `Decision::Skip` so its subtree
         /// is not scanned.
         ///
         /// Relies on directories having a non-zero inode size, which is
@@ -373,12 +518,11 @@ mod tests {
             let count = parallel_search(
                 tmp.path(),
                 &meta,
-                1,
+                Calibration { per_entry: 1, overhead: 0 },
                 &no_shutdown(),
                 &args,
                 &AHashSet::new(),
-            )
-            .unwrap();
+            );
             // root is blacklisted → Skip → child is never visited;
             // root itself is counted before Skip is returned.
             assert_eq!(count, 1);
@@ -403,12 +547,11 @@ mod tests {
             let count = parallel_search(
                 tmp.path(),
                 &meta,
-                1_000_000,
+                Calibration { per_entry: 1_000_000, overhead: 0 },
                 &no_shutdown(),
                 &args,
                 &AHashSet::new(),
-            )
-            .unwrap();
+            );
             // Correct division: approx_files = 0 → no threshold fires →
             // child is visited → count = 2.
             assert_eq!(count, 2);

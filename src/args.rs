@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
 
@@ -33,7 +34,7 @@ pub struct Args {
     #[clap(short = 'o', long, action = clap::ArgAction::Set, default_value_t = true)]
     pub one_filesystem: bool,
 
-    /// Calibration directory file count
+    /// Calibration batch size (raised to a 1000-file minimum)
     #[clap(short = 'c', long, value_parser = clap::value_parser!(u64).range(1..), default_value_t = crate::calibrate::DEFAULT_TEST_COUNT)]
     pub calibration_count: u64,
 
@@ -94,7 +95,140 @@ fn parse_paths(x: &str) -> Result<PathBuf, Error> {
     }
 }
 
-/// Normalises a skip-path string without requiring the path to exist.
+/// Normalises a skip-path string without requiring the path to exist, so a
+/// caller can exclude a path (e.g. a virtual filesystem) that is absent on this
+/// host without aborting the whole scan. Existing paths are normalised as
+/// usual; an absent one falls back to its lexical form (normpath's
+/// `normalize_virtually` is Windows-only). Other errors still surface.
 fn parse_skip_paths(x: &str) -> Result<PathBuf, Error> {
-    Ok(Path::new(x).normalize()?.into_path_buf())
+    let p = Path::new(x);
+    match p.normalize() {
+        Ok(n) => Ok(n.into_path_buf()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(p.to_path_buf()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Warns (the caller still honors the value) when `threads > available`:
+/// throughput typically drops past the core count as calibration and the walk
+/// already saturate the available cores.
+#[must_use]
+pub fn oversubscription_warning(
+    threads: usize,
+    available: usize,
+) -> Option<String> {
+    (threads > available).then(|| {
+        format!(
+            "--threads {threads} exceeds available parallelism \
+             ({available}); throughput may decrease"
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::{
+        oversubscription_warning, parse_paths, parse_skip_paths, parse_threads,
+    };
+
+    mod parse_threads {
+        use super::*;
+
+        /// The accepted range is `2..=65535`; the bounds must be inclusive.
+        #[test]
+        fn accepts_inclusive_bounds() {
+            assert_eq!(parse_threads("2").unwrap(), 2);
+            assert_eq!(parse_threads("65535").unwrap(), 65535);
+        }
+
+        /// One thread is rejected: the walk reserves a worker, so 2 is the floor.
+        #[test]
+        fn rejects_below_minimum() {
+            assert!(parse_threads("1").is_err());
+            assert!(parse_threads("0").is_err());
+        }
+
+        /// Values above the range are rejected rather than silently clamped.
+        #[test]
+        fn rejects_above_maximum() {
+            assert!(parse_threads("65536").is_err());
+        }
+
+        /// Non-numeric and empty input is a parse error, not a default.
+        #[test]
+        fn rejects_non_numeric() {
+            assert!(parse_threads("abc").is_err());
+            assert!(parse_threads("").is_err());
+            assert!(parse_threads("-1").is_err());
+        }
+    }
+
+    mod parse_paths {
+        use super::*;
+
+        /// An existing directory is accepted and normalised.
+        #[test]
+        fn accepts_existing_dir() {
+            let tmp = TempDir::new().unwrap();
+            assert!(parse_paths(tmp.path().to_str().unwrap()).is_ok());
+        }
+
+        /// A regular file is not a valid search root.
+        #[test]
+        fn rejects_regular_file() {
+            let tmp = TempDir::new().unwrap();
+            let file = tmp.path().join("f.txt");
+            std::fs::write(&file, b"x").unwrap();
+            assert!(parse_paths(file.to_str().unwrap()).is_err());
+        }
+
+        /// A missing path is rejected so the walk never starts from nothing.
+        #[test]
+        fn rejects_missing_path() {
+            assert!(parse_paths("/nonexistent/xyz/abc123").is_err());
+        }
+    }
+
+    mod parse_skip_paths {
+        use super::*;
+
+        /// An existing directory is accepted and normalised.
+        #[test]
+        fn accepts_existing_dir() {
+            let tmp = TempDir::new().unwrap();
+            assert!(parse_skip_paths(tmp.path().to_str().unwrap()).is_ok());
+        }
+
+        /// A skip path need not exist — excluding a path that is absent on this
+        /// host must not abort the whole scan.
+        #[test]
+        fn accepts_nonexistent_path() {
+            assert!(parse_skip_paths("/nonexistent/xyz/abc123").is_ok());
+        }
+    }
+
+    mod oversubscription_warning {
+        use super::*;
+
+        /// A thread count above the core count returns a message naming both
+        /// numbers so the user understands the tradeoff.
+        #[test]
+        fn warns_when_above_available() {
+            let w = oversubscription_warning(16, 8);
+            assert!(w.is_some());
+            let msg = w.unwrap();
+            assert!(msg.contains("16") && msg.contains('8'));
+        }
+
+        /// At or below the core count there is no oversubscription, so no
+        /// warning is produced.
+        #[test]
+        fn silent_when_at_or_below_available() {
+            assert!(oversubscription_warning(8, 8).is_none());
+            assert!(oversubscription_warning(4, 8).is_none());
+            assert!(oversubscription_warning(2, 8).is_none());
+        }
+    }
 }

@@ -26,8 +26,10 @@ fdlimit = "0.3.0"
 ahash = "0.8.12"
 anstyle = "1.0.14"
 signal-hook = "0.4.4"
-ignore = "0.4.25"
 normpath = "1.5.1"
+crossbeam-deque = "0.8"
+crossbeam-utils = "0.8"
+rustix = { version = "1", features = ["fs"] }
 
 [lints.rust]
 future-incompatible = { level = "warn", priority = -2 }

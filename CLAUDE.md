@@ -37,12 +37,12 @@ A sibling `AGENTS.md` carries the same guidance in condensed form; keep the two 
 ### Two-phase operation
 
 **Phase 1 — Calibration (`src/calibrate.rs`)**
-Uses a `rayon` thread pool to mass-create `calibration_count` (default 100) empty files in a temporary directory on the target filesystem, then reads the directory's inode size. The ratio `inode_size / calibration_count` gives bytes-per-entry for that specific filesystem. Can be skipped by passing `-i <ratio>` directly, or pointed at a custom dir with `-t`. A `size_inode_ratio` of `0` (e.g. shutdown mid-calibration) disables flagging — `process_dir_entry` guards against the divide-by-zero.
+Creates empty files on the target filesystem in batches (a floor of 1 000 per batch; `-c` raises it), re-`stat`ing the temp directory after each batch until its inode size has grown a few times (`STEP_TARGET`) or a 50 000-file cap (`FILE_CAP`) is hit. A least-squares fit (`fit_calibration`) over the `(files, size)` samples gives the **marginal** bytes-per-entry (slope) and **fixed overhead** (intercept) as a `Calibration`; the walk then estimates `approx_entries = (dir_size − overhead) / per_entry`. Because the slope is the *marginal* cost (not `total/count`, which folds in the fixed block), estimates run higher — and more accurate — than before on block filesystems. A filesystem whose directory size never grows is detected (slope ≤ 0.5) and reported, with flagging disabled (`per_entry = 0`, the same sentinel as a shutdown mid-calibration). Calibration can be skipped with `-i <ratio>` (per-entry only, overhead 0) or pointed at a custom dir with `-t`. `classify_dir` guards against the zero-`per_entry` divide.
 
 **Phase 2 — Parallel walk (`src/walk.rs`)**
-Uses `ignore::WalkBuilder` (the same engine as ripgrep) to walk the filesystem in parallel; a separate single-thread `rayon` pool prints periodic progress (`-p`). For each directory it computes `approx_entries = dir_inode_size / size_inode_ratio`. Directories **strictly exceeding** (`>`):
-- `alert_threshold` (default 10 000) → yellow warning, scanning continues (`WalkState::Continue`)
-- `blacklist_threshold` (default 100 000) → red warning, subtree is **skipped** (`WalkState::Skip`)
+Uses a custom `crossbeam-deque` work-stealing engine (`src/walk/engine.rs`, adapted from the sibling `minifind` project) to walk the filesystem in parallel, visiting directories only; a separate single-thread `rayon` pool prints periodic progress (`-p`). For each directory it computes `approx_entries = (dir_inode_size − overhead) / per_entry`. Directories **strictly exceeding** (`>`):
+- `alert_threshold` (default 10 000) → yellow warning, scanning continues (`Decision::Descend`)
+- `blacklist_threshold` (default 100 000) → red warning, subtree is **skipped** (`Decision::Skip`)
 
 `main.rs` bails at startup if `alert_threshold >= blacklist_threshold` (the yellow branch would be unreachable).
 
@@ -54,8 +54,11 @@ Accurate mode (`-a`) replaces the estimate with an exact `std::fs::read_dir().co
 |---|---|
 | `src/main.rs` | CLI entry point; loops over paths, orchestrates calibration + walk |
 | `src/args.rs` | Clap-derive argument definitions and path/thread validation |
-| `src/calibrate.rs` | Calibration via mass file creation; returns `size_inode_ratio` |
-| `src/walk.rs` | `parallel_search` + `process_dir_entry` + `print_offender` |
+| `src/calibrate.rs` | Adaptive batch calibration + `fit_calibration` regression; returns `Calibration` |
+| `src/walk.rs` | `parallel_search` policy + `classify_dir` + `print_offender` |
+| `src/walk/engine.rs` | `crossbeam-deque` work-stealing scheduler; `walk_dirs` + `Decision`/`DirInfo` |
+| `src/walk/unix.rs` | Unix leaf I/O via `rustix` (statat/getdents) |
+| `src/walk/fallback.rs` | Non-Unix leaf I/O via `std::fs` |
 | `src/interrupt.rs` | SIGINT/SIGTERM/SIGQUIT handler via `signal_hook` |
 | `src/progress.rs` | `indicatif` spinner helper |
 
@@ -69,11 +72,11 @@ Accurate mode (`-a`) replaces the estimate with an exact `std::fs::read_dir().co
 
 ### Performance profile (I/O-bound, not CPU-bound)
 
-The tool's runtime is dominated by **filesystem I/O** — one `stat` per directory plus `readdir`/`getdents` traversal — not by its own computation. Profiling a 183 k-directory traversal confirmed this:
+The tool's runtime is dominated by **filesystem I/O** — one `stat` per directory plus `readdir`/`getdents` traversal — not by its own computation. Profiling a 183 k-directory traversal confirmed this (measured with the previous `ignore`-based walker; the conclusion still holds for the current engine):
 - **Cold cache:** ~95 % of wall time blocked on disk (≈4 % CPU); our own code is ~0.5 % of wall time.
-- **Warm cache (no disk waits):** still ~77 % kernel syscall handling vs ~17 % in our binary, and that 17 % is mostly `ignore`-crate path bookkeeping + allocator/`Arc` churn. The core heuristic (the `size / size_inode_ratio` division, threshold checks, `AHashSet` lookup, `AtomicU64` increment) is below the profiler's noise floor.
+- **Warm cache (no disk waits):** still ~77 % kernel syscall handling vs ~17 % in our binary, and that 17 % is mostly walker path bookkeeping + allocator/`Arc` churn. The core heuristic (the `(size − overhead) / per_entry` division, threshold checks, `AHashSet` lookup, `AtomicU64` increment) is below the profiler's noise floor.
 
-**Implication for changes:** micro-optimizing the per-directory arithmetic or hot path (branchless tricks, SoA, lock-free sharding, manual inlining) buys nothing measurable here — there is no CPU time there to reclaim. The only levers that move the needle are *reducing syscalls/seeks* (the `WalkState::Skip` on blacklisted subtrees is the big one) and, in the warm case, the choice of walk framework. Follow Chapter 3's rule — measure (e.g. `perf record` / flamegraph on a real tree) before optimizing.
+**Implication for changes:** micro-optimizing the per-directory arithmetic or hot path (branchless tricks, SoA, lock-free sharding, manual inlining) buys nothing measurable here — there is no CPU time there to reclaim. The only levers that move the needle are *reducing syscalls/seeks* (the `Decision::Skip` on blacklisted subtrees is the big one) and, in the warm case, the choice of walk framework. Follow Chapter 3's rule — measure (e.g. `perf record` / flamegraph on a real tree) before optimizing.
 
 ### Release / distribution
 

@@ -6,6 +6,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::Instant;
 
 use ahash::AHashSet;
@@ -45,6 +46,13 @@ fn main() -> Result<(), Error> {
     let shutdown_walk = Arc::new(AtomicBool::new(false));
     interrupt::setup_interrupt_handler(&shutdown_walk)?;
 
+    // Honor the requested thread count, but warn past the core count.
+    let available =
+        thread::available_parallelism().map_or(2, std::num::NonZeroUsize::get);
+    if let Some(w) = args::oversubscription_warning(args.threads, available) {
+        eprintln!("findlargedir: {w}");
+    }
+
     println!("Using {} threads for calibration and scanning", args.threads);
 
     // Mass file creation and parallel walking are FD-hungry.
@@ -74,8 +82,12 @@ fn main() -> Result<(), Error> {
 
         // Ratio source, in priority order: caller-supplied, calibrated in a
         // user-chosen dir, or calibrated in a temp dir at the search root.
-        let size_inode_ratio = if args.size_inode_ratio > 0 {
-            args.size_inode_ratio
+        let calibration = if args.size_inode_ratio > 0 {
+            // -i escape hatch: per-entry only, no measured overhead.
+            calibrate::Calibration {
+                per_entry: args.size_inode_ratio,
+                overhead: 0,
+            }
         } else if let Some(ref user_path) = args.calibration_path {
             // A different device would calibrate the wrong filesystem.
             if fs::metadata(user_path.as_path()).context(
@@ -118,11 +130,11 @@ fn main() -> Result<(), Error> {
         let dir_count = walk::parallel_search(
             path,
             &path_metadata,
-            size_inode_ratio,
+            calibration,
             &shutdown_walk,
             &args,
             &skip_path_set,
-        )?;
+        );
 
         pb.finish_with_message("Done.");
 
