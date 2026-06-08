@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 

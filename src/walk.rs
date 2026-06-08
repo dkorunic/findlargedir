@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+
 use std::fs::Metadata;
 use std::fs::read_dir;
 use std::os::unix::fs::MetadataExt;

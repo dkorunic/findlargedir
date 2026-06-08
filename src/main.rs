@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2022 Dinko Korunic <dinko.korunic@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::Arc;
