@@ -94,11 +94,9 @@ fn main() -> Result<(), Error> {
         }
 
         let start = Instant::now();
-        let pb = progress::new_spinner(format!(
-            "Scanning path {} in progress...",
-            path.display()
-        ));
 
+        // parallel_search owns the scan spinner so it can pause it while a
+        // crossed filesystem is calibrated mid-walk.
         let dir_count = walk::parallel_search(
             path,
             &path_metadata,
@@ -107,8 +105,6 @@ fn main() -> Result<(), Error> {
             &args,
             &skip_path_set,
         );
-
-        pb.finish_with_message("Done.");
 
         if shutdown_walk.load(Ordering::Relaxed) {
             println!("Requested program exit, stopping scan...");
@@ -173,6 +169,6 @@ fn resolve_calibration(
 
     let tmp_dir = TempDir::new_in(cal_dir)
         .context("Unable to setup/create calibration test directory")?;
-    calibrate::get_inode_ratio(tmp_dir.path(), shutdown, args)
+    calibrate::get_inode_ratio(tmp_dir.path(), cal_dir, shutdown, args)
         .context("Unable to calibrate inode to size ratio")
 }

@@ -188,7 +188,9 @@ pub fn fs_type_name(_path: &Path) -> String {
 /// Creates files in `test_path` on the fixed geometric schedule up to
 /// [`FILE_CAP`], then fits the samples. Files are created in order (not in
 /// parallel) so the directory's on-disk layout — and hence the fitted ratio — is
-/// reproducible across runs.
+/// reproducible across runs. `mount` is the filesystem location being calibrated
+/// for (the scan root or a crossed mount point); it is used only in the start
+/// message, while `test_path` is the temp dir the files actually go into.
 ///
 /// Returns `per_entry: 0` (flagging disabled) if interrupted mid-calibration or
 /// if the filesystem exposes no per-entry growth.
@@ -197,10 +199,15 @@ pub fn fs_type_name(_path: &Path) -> String {
 /// Fails if a file cannot be created or the directory metadata cannot be read.
 pub fn get_inode_ratio(
     test_path: &Path,
+    mount: &Path,
     shutdown: &Arc<AtomicBool>,
     args: &args::Args,
 ) -> Result<Calibration, Error> {
-    println!("Starting test directory calibration in {}", test_path.display());
+    println!(
+        "Starting test directory calibration for mount {}, filesystem {}",
+        mount.display(),
+        fs_type_name(mount)
+    );
 
     let pb = progress::new_spinner("Creating test files in progress...");
 
@@ -321,8 +328,12 @@ mod tests {
             // Signal shutdown before the function even begins its loop.
             shutdown.store(true, Ordering::Relaxed);
 
-            let result =
-                get_inode_ratio(tmp.path(), &shutdown, &make_args(100));
+            let result = get_inode_ratio(
+                tmp.path(),
+                tmp.path(),
+                &shutdown,
+                &make_args(100),
+            );
 
             assert_eq!(
                 result.unwrap(),
@@ -337,8 +348,12 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let shutdown = Arc::new(AtomicBool::new(false));
 
-            let result =
-                get_inode_ratio(tmp.path(), &shutdown, &make_args(10));
+            let result = get_inode_ratio(
+                tmp.path(),
+                tmp.path(),
+                &shutdown,
+                &make_args(10),
+            );
 
             assert!(
                 result.is_ok(),
@@ -353,7 +368,12 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let shutdown = Arc::new(AtomicBool::new(false));
 
-            let result = get_inode_ratio(tmp.path(), &shutdown, &make_args(1));
+            let result = get_inode_ratio(
+                tmp.path(),
+                tmp.path(),
+                &shutdown,
+                &make_args(1),
+            );
 
             assert!(result.is_ok(), "calibration_count=1 must not panic");
         }
@@ -366,7 +386,13 @@ mod tests {
             let tmp = TempDir::new().unwrap();
             let shutdown = Arc::new(AtomicBool::new(false));
 
-            get_inode_ratio(tmp.path(), &shutdown, &make_args(100)).unwrap();
+            get_inode_ratio(
+                tmp.path(),
+                tmp.path(),
+                &shutdown,
+                &make_args(100),
+            )
+            .unwrap();
 
             let created =
                 std::fs::read_dir(tmp.path()).unwrap().count() as u64;
@@ -385,7 +411,7 @@ mod tests {
             let mut args = (*make_args(100)).clone();
             args.calibration_name_length = 24;
 
-            get_inode_ratio(tmp.path(), &shutdown, &args).unwrap();
+            get_inode_ratio(tmp.path(), tmp.path(), &shutdown, &args).unwrap();
 
             let mut saw_file = false;
             for entry in std::fs::read_dir(tmp.path()).unwrap() {

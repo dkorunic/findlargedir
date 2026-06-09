@@ -17,11 +17,12 @@ use std::time::Duration;
 use ahash::{AHashMap, AHashSet};
 use ansi_term::Colour::{Green, Red, Yellow};
 use human_format::Formatter;
-use indicatif::HumanBytes;
+use indicatif::{HumanBytes, ProgressBar};
 use tempfile::TempDir;
 
 use crate::args::Args;
 use crate::calibrate::{self, Calibration};
+use crate::progress;
 
 mod engine;
 
@@ -49,6 +50,9 @@ struct CalContext<'a> {
     foreign: Mutex<AHashMap<u64, Calibration>>,
     shutdown: &'a Arc<AtomicBool>,
     args: &'a Args,
+    // Clone of the scan spinner; suspended while a foreign filesystem is
+    // calibrated so its messages and own spinner aren't clobbered.
+    scan_pb: ProgressBar,
 }
 
 impl CalContext<'_> {
@@ -71,6 +75,8 @@ impl CalContext<'_> {
     /// Calibrates the filesystem holding `sample_path` in a temp dir there. A
     /// fixed `-i` ratio short-circuits without touching the filesystem; an
     /// unwritable filesystem or a failed calibration disables flagging for it.
+    /// The scan spinner is paused for the duration so calibration's own output
+    /// (start/done lines and its spinner) renders cleanly.
     fn calibrate(&self, sample_path: &Path) -> Calibration {
         const DISABLED: Calibration =
             Calibration { per_entry: 0, overhead: 0 };
@@ -82,28 +88,35 @@ impl CalContext<'_> {
             };
         }
 
-        if calibrate::is_read_only(sample_path) {
-            println!(
-                "Skipping calibration on read-only filesystem at {}; \
-                 size-based flagging disabled there",
-                sample_path.display()
-            );
-            return DISABLED;
-        }
-
-        let tmp = match TempDir::new_in(sample_path) {
-            Ok(t) => t,
-            Err(e) => {
+        self.scan_pb.suspend(|| {
+            if calibrate::is_read_only(sample_path) {
                 println!(
-                    "Warning: cannot calibrate filesystem at {} ({e}); \
+                    "Skipping calibration on read-only filesystem at {}; \
                      size-based flagging disabled there",
                     sample_path.display()
                 );
                 return DISABLED;
             }
-        };
-        calibrate::get_inode_ratio(tmp.path(), self.shutdown, self.args)
+
+            let tmp = match TempDir::new_in(sample_path) {
+                Ok(t) => t,
+                Err(e) => {
+                    println!(
+                        "Warning: cannot calibrate filesystem at {} ({e}); \
+                         size-based flagging disabled there",
+                        sample_path.display()
+                    );
+                    return DISABLED;
+                }
+            };
+            calibrate::get_inode_ratio(
+                tmp.path(),
+                sample_path,
+                self.shutdown,
+                self.args,
+            )
             .unwrap_or(DISABLED)
+        })
     }
 }
 
@@ -120,6 +133,11 @@ pub fn parallel_search(
     skip_path: &AHashSet<PathBuf>,
 ) -> u64 {
     let dir_count = Arc::new(AtomicU64::new(0));
+
+    let scan_pb = progress::new_spinner(format!(
+        "Scanning path {} in progress...",
+        path.display()
+    ));
 
     // Periodic progress on a dedicated thread. The channel doubles as a stop
     // signal: dropping the sender after the walk wakes the thread immediately
@@ -151,6 +169,7 @@ pub fn parallel_search(
         foreign: Mutex::new(AHashMap::new()),
         shutdown: shutdown_walk,
         args,
+        scan_pb: scan_pb.clone(),
     };
     let classify = |info: engine::DirInfo| {
         classify_dir(&info, &cal, args, skip_path, &dir_count)
@@ -173,6 +192,8 @@ pub fn parallel_search(
         drop(tx);
         let _ = handle.join();
     }
+
+    scan_pb.finish_with_message("Done.");
 
     dir_count.load(Ordering::Relaxed)
 }
@@ -206,8 +227,9 @@ fn classify_dir(
     // Don't cross mount points when confined to one filesystem.
     if args.one_filesystem && info.dev != cal.root_dev {
         println!(
-            "Identified filesystem boundary at {}, skipping...",
-            full_path.display()
+            "Identified filesystem boundary at {}, filesystem {}, skipping (use -o false to cross)",
+            full_path.display(),
+            calibrate::fs_type_name(full_path)
         );
 
         return engine::Decision::Skip;
@@ -349,6 +371,7 @@ mod tests {
         use std::sync::Mutex;
 
         use ahash::AHashMap;
+        use indicatif::ProgressBar;
         use tempfile::TempDir;
 
         use super::super::CalContext;
@@ -368,6 +391,7 @@ mod tests {
                 foreign: Mutex::new(AHashMap::new()),
                 shutdown: &sd,
                 args: &args,
+                scan_pb: ProgressBar::hidden(),
             };
             assert_eq!(
                 cx.resolve(7, std::path::Path::new("/nonexistent")),
@@ -388,6 +412,7 @@ mod tests {
                 foreign: Mutex::new(AHashMap::new()),
                 shutdown: &sd,
                 args: &args,
+                scan_pb: ProgressBar::hidden(),
             };
             let tmp = TempDir::new().unwrap();
             let first = cx.resolve(99, tmp.path());
@@ -408,6 +433,7 @@ mod tests {
                 foreign: Mutex::new(AHashMap::new()),
                 shutdown: &sd,
                 args: &a,
+                scan_pb: ProgressBar::hidden(),
             };
             let tmp = TempDir::new().unwrap();
             assert_eq!(
@@ -478,6 +504,7 @@ mod tests {
                 foreign: std::sync::Mutex::new(ahash::AHashMap::new()),
                 shutdown,
                 args,
+                scan_pb: indicatif::ProgressBar::hidden(),
             }
         }
 
