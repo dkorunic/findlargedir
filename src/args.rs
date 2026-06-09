@@ -38,6 +38,10 @@ pub struct Args {
     #[clap(short = 'c', long, value_parser = clap::value_parser!(u64).range(1..), default_value_t = crate::calibrate::DEFAULT_TEST_COUNT)]
     pub calibration_count: u64,
 
+    /// Calibration filename length, matched to typical entries (1..=255)
+    #[clap(short = 'n', long, value_parser = ValueParser::new(parse_name_length), default_value_t = crate::calibrate::DEFAULT_NAME_LEN)]
+    pub calibration_name_length: usize,
+
     /// Alert threshold count (print the estimate)
     #[clap(short = 'A', long, value_parser, default_value_t = crate::walk::ALERT_COUNT)]
     pub alert_threshold: u64,
@@ -46,7 +50,7 @@ pub struct Args {
     #[clap(short = 'B', long, value_parser, default_value_t = crate::walk::BLACKLIST_COUNT)]
     pub blacklist_threshold: u64,
 
-    /// Number of threads to use when calibrating and scanning (2..=65535)
+    /// Number of threads to use when scanning (2..=65535)
     #[clap(short = 'x', long, value_parser = ValueParser::new(parse_threads), default_value_t = thread::available_parallelism().map(| n | n.get()).unwrap_or(2)
     )]
     pub threads: usize,
@@ -55,7 +59,7 @@ pub struct Args {
     #[clap(short = 'p', long, value_parser, default_value_t = crate::walk::STATUS_SECONDS)]
     pub updates: u64,
 
-    /// Skip calibration and provide directory entry to inode size ratio (typically ~21-32)
+    /// Skip calibration and use this bytes-per-entry ratio directly (e.g. the value a prior run reported)
     #[clap(short = 'i', long, value_parser, default_value_t = 0u64)]
     pub size_inode_ratio: u64,
 
@@ -71,6 +75,17 @@ pub struct Args {
     #[clap(required = true, value_parser = ValueParser::new(parse_paths), value_hint = ValueHint::AnyPath
     )]
     pub path: Vec<PathBuf>,
+}
+
+/// Rejects calibration name lengths outside `1..=255`; 255 is `NAME_MAX` on
+/// most filesystems, and a length of 0 would create empty-named files.
+fn parse_name_length(x: &str) -> Result<usize, Error> {
+    let v = x.parse::<usize>()?;
+    if (1..=255).contains(&v) {
+        Ok(v)
+    } else {
+        Err(anyhow!("calibration name length should be in (1..=255) range"))
+    }
 }
 
 /// Rejects thread counts outside `2..=65535`.
@@ -130,8 +145,39 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        oversubscription_warning, parse_paths, parse_skip_paths, parse_threads,
+        oversubscription_warning, parse_name_length, parse_paths,
+        parse_skip_paths, parse_threads,
     };
+
+    mod parse_name_length {
+        use super::*;
+
+        /// The accepted range is `1..=255`; the bounds must be inclusive.
+        #[test]
+        fn accepts_inclusive_bounds() {
+            assert_eq!(parse_name_length("1").unwrap(), 1);
+            assert_eq!(parse_name_length("255").unwrap(), 255);
+        }
+
+        /// Zero would create empty-named files; reject it.
+        #[test]
+        fn rejects_zero() {
+            assert!(parse_name_length("0").is_err());
+        }
+
+        /// Above `NAME_MAX` (255) is rejected rather than silently clamped.
+        #[test]
+        fn rejects_above_name_max() {
+            assert!(parse_name_length("256").is_err());
+        }
+
+        /// Non-numeric and empty input is a parse error, not a default.
+        #[test]
+        fn rejects_non_numeric() {
+            assert!(parse_name_length("abc").is_err());
+            assert!(parse_name_length("").is_err());
+        }
+    }
 
     mod parse_threads {
         use super::*;

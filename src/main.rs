@@ -53,7 +53,7 @@ fn main() -> Result<(), Error> {
         eprintln!("findlargedir: {w}");
     }
 
-    println!("Using {} threads for calibration and scanning", args.threads);
+    println!("Using {} threads for scanning", args.threads);
 
     // Mass file creation and parallel walking are FD-hungry.
     if let Ok(Outcome::LimitRaised { to: x, .. }) = raise_fd_limit() {
@@ -75,45 +75,17 @@ fn main() -> Result<(), Error> {
             continue;
         }
 
-        println!("Started analysis for path {}", path.display());
+        println!(
+            "Started analysis for path {}, filesystem {}",
+            path.display(),
+            calibrate::fs_type_name(path)
+        );
 
         let path_metadata = fs::metadata(path)
             .context("Unable to retrieve top search directory metadata")?;
 
-        // Ratio source, in priority order: caller-supplied, calibrated in a
-        // user-chosen dir, or calibrated in a temp dir at the search root.
-        let calibration = if args.size_inode_ratio > 0 {
-            // -i escape hatch: per-entry only, no measured overhead.
-            calibrate::Calibration {
-                per_entry: args.size_inode_ratio,
-                overhead: 0,
-            }
-        } else if let Some(ref user_path) = args.calibration_path {
-            // A different device would calibrate the wrong filesystem.
-            if fs::metadata(user_path.as_path()).context(
-                "Unable to retrieve user-specified calibration directory metadata",
-            )?.dev() != path_metadata.dev()
-            {
-                println!(
-                    "Oops, test directory resides on a different device than path {}, results are possibly unreliable!",
-                    path.display()
-                );
-            }
-
-            let tmp_dir = TempDir::new_in(user_path.as_path()).context(
-                "Unable to setup/create calibration test directory",
-            )?;
-
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_walk, &args)
-                .context("Unable to calibrate inode to size ratio")?
-        } else {
-            let tmp_dir = TempDir::new_in(path.as_path()).context(
-                "Unable to setup/create calibration test directory",
-            )?;
-
-            calibrate::get_inode_ratio(tmp_dir.path(), &shutdown_walk, &args)
-                .context("Unable to calibrate inode to size ratio")?
-        };
+        let calibration =
+            resolve_calibration(path, &path_metadata, &shutdown_walk, &args)?;
 
         // Don't start a walk if calibration was interrupted.
         if shutdown_walk.load(Ordering::Relaxed) {
@@ -152,4 +124,55 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+/// Resolves the calibration for `path`'s filesystem, in priority order: a fixed
+/// `-i` ratio (no files written), else calibration in the `-t` dir if given,
+/// else a temp dir at the search root. A read-only calibration directory is
+/// skipped, disabling size-based flagging for this path rather than erroring.
+///
+/// # Errors
+/// Fails if calibration directory metadata can't be read, the temp dir can't be
+/// created, or calibration itself fails.
+fn resolve_calibration(
+    path: &std::path::Path,
+    path_metadata: &std::fs::Metadata,
+    shutdown: &Arc<AtomicBool>,
+    args: &args::Args,
+) -> Result<calibrate::Calibration, Error> {
+    if args.size_inode_ratio > 0 {
+        // -i escape hatch: per-entry only, no measured overhead.
+        return Ok(calibrate::Calibration {
+            per_entry: args.size_inode_ratio,
+            overhead: 0,
+        });
+    }
+
+    let cal_dir = args.calibration_path.as_deref().unwrap_or(path);
+
+    // A `-t` dir on a different device would calibrate the wrong fs.
+    if let Some(user_path) = args.calibration_path.as_deref()
+        && fs::metadata(user_path)
+            .context("Unable to retrieve user-specified calibration directory metadata")?
+            .dev()
+            != path_metadata.dev()
+    {
+        println!(
+            "Oops, test directory resides on a different device than path {}, results are possibly unreliable!",
+            path.display()
+        );
+    }
+
+    if calibrate::is_read_only(cal_dir) {
+        println!(
+            "Skipping calibration on read-only filesystem {}; size-based flagging disabled",
+            cal_dir.display()
+        );
+        return Ok(calibrate::Calibration { per_entry: 0, overhead: 0 });
+    }
+
+    let tmp_dir = TempDir::new_in(cal_dir)
+        .context("Unable to setup/create calibration test directory")?;
+    calibrate::get_inode_ratio(tmp_dir.path(), shutdown, args)
+        .context("Unable to calibrate inode to size ratio")
 }

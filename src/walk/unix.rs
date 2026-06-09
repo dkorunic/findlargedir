@@ -51,21 +51,25 @@ pub(crate) fn open_dir(path: &Path, follow: bool) -> io::Result<DirHandle> {
 /// Invokes `f` for each directory/symlink entry with its full path — built
 /// directly from the raw name — and its `d_type` (`None` on `DT_UNKNOWN`).
 /// Plain non-traversable entries (files, sockets, …) are filtered out here so
-/// their child paths are never allocated; `.`/`..` are skipped.
+/// their child paths are never allocated; `.`/`..` are skipped. Returns the
+/// total entry count (every name bar `.`/`..`, traversable or not) — the exact
+/// live count, harvested from the `getdents` pass the descent already pays for.
 pub(crate) fn for_each_entry(
     d: DirHandle,
     parent: &Path,
     mut f: impl FnMut(PathBuf, Option<ChildKind>),
-) -> io::Result<()> {
+) -> io::Result<u64> {
     // `Dir::new` adopts the fd directly; `read_from` would fcntl+openat a
     // fresh one (two extra syscalls per directory).
     let dir = fs::Dir::new(d.0)?;
+    let mut count = 0;
     for entry in dir {
         let entry = entry?;
         let bytes = entry.file_name().to_bytes();
         if bytes == b"." || bytes == b".." {
             continue;
         }
+        count += 1;
         let kind = map_type(entry.file_type());
         // Skip entries the walker never traverses before paying for the path
         // allocation; `None` (DT_UNKNOWN) is resolved by the caller via lstat.
@@ -74,7 +78,7 @@ pub(crate) fn for_each_entry(
         }
         f(parent.join(OsStr::from_bytes(bytes)), kind);
     }
-    Ok(())
+    Ok(count)
 }
 
 /// Resolves a `DT_UNKNOWN` entry's own type via lstat.

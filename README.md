@@ -14,16 +14,18 @@
 
 Such directories mostly **cannot shrink back** even after their contents are cleaned up, because most Linux and Unix filesystems do not support directory inode shrinking (ext3/ext4 being a prime example). This situation commonly arises with forgotten web session directories (e.g. PHP session folders with GC intervals set to several days), CMS cache and compiled template directories, or POSIX filesystem emulations over object storage.
 
-The program identifies these directories using **calibration** — it creates files in a temporary directory on the target filesystem and fits a line to how the directory's inode size grows, recovering the marginal bytes-per-entry cost (and fixed overhead) for that filesystem. It then estimates each directory's entry count from a single `stat`, scanning without performing expensive full directory reads. While many tools exist to scan filesystems (`find`, `du`, `ncdu`, etc.), none of them use heuristics to skip expensive lookups because they are designed for **full accuracy**. This tool is instead designed to use heuristics and alert on problems **without getting stuck** on the very directories it is trying to find.
+The program identifies these directories using **calibration** — it creates files (in order, up to a fixed budget) in a temporary directory on the target filesystem and fits a line to how the directory's inode size grows, recovering that filesystem's marginal bytes-per-entry cost and fixed overhead. Calibration is deterministic: repeated runs on the same filesystem produce the same ratio.
 
-By default, the program **does not follow symlinks** (use `-f` to enable) and **requires read/write permissions** on the filesystem being calibrated, in order to create temporary files and measure the resulting inode size.
+It then uses that ratio to **estimate** each directory's entry count from a single `O(1)` `stat`, so it can decide whether to descend a directory or **skip** an entire subtree — without ever performing the expensive full directory read that would freeze the process on a black hole. Crucially, every directory it *does* descend into is reported with its **exact** entry count, harvested for free from the traversal the walk already performs; the size estimate is reserved for the skip decision and for reporting the skipped subtrees (as a size-based upper bound, since a directory's size is its high-water mark). While many tools exist to scan filesystems (`find`, `du`, `ncdu`, etc.), none of them use heuristics to skip expensive lookups because they are designed for **full accuracy**. This tool is instead designed to use heuristics and alert on problems **without getting stuck** on the very directories it is trying to find.
+
+By default, the program **does not follow symlinks** (use `-f` to enable). Calibration needs **read/write permissions** to create temporary files and measure the resulting inode size; a **read-only filesystem is skipped** (scanned without size-based flagging) rather than treated as an error. When crossing mount points (`-o false`), **each filesystem is calibrated separately**, since per-entry geometry differs across filesystem types.
 
 ![Demo](demo.gif)
 
 ## Caveats
 
-- Requires read/write privileges on each filesystem being tested. A temporary directory with many small files is created during calibration and cleaned up afterwards.
-- Accurate mode (`-a`) can cause excessive I/O and high memory usage; use it only when needed.
+- Calibration needs read/write privileges on each filesystem being tested: a temporary directory of small files is created and cleaned up afterwards. Read-only filesystems are skipped automatically (no flagging there), and with `-i` a fixed ratio is used and nothing is written.
+- Accurate mode (`-a`) only changes how *blacklisted* (skipped) directories are reported — it reads them in full to get an exact count, which can stall the process on a true black hole. Directories that are scanned are already counted exactly without it.
 
 ## Usage
 
@@ -40,22 +42,25 @@ Options:
   -a, --accurate <ACCURATE>                        Perform accurate directory entry counting [default: false] [possible values: true, false]
   -o, --one-filesystem <ONE_FILESYSTEM>            Do not cross mount points [default: true] [possible values: true, false]
   -c, --calibration-count <CALIBRATION_COUNT>      Calibration batch size (raised to a 1000-file minimum) [default: 100]
+  -n, --calibration-name-length <NAME_LENGTH>      Calibration filename length, matched to typical entries (1..=255) [default: 24]
   -A, --alert-threshold <ALERT_THRESHOLD>          Alert threshold count (print the estimate) [default: 10000]
   -B, --blacklist-threshold <BLACKLIST_THRESHOLD>  Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
-  -x, --threads <THREADS>                          Number of threads to use when calibrating and scanning (2..=65535) [default: 20]
+  -x, --threads <THREADS>                          Number of threads to use when scanning (2..=65535) [default: available CPUs]
   -p, --updates <UPDATES>                          Seconds between status updates, set to 0 to disable [default: 20]
-  -i, --size-inode-ratio <SIZE_INODE_RATIO>        Skip calibration and provide directory entry to inode size ratio (typically ~21-32) [default: 0]
+  -i, --size-inode-ratio <SIZE_INODE_RATIO>        Skip calibration and use this bytes-per-entry ratio directly (e.g. the value a prior run reported) [default: 0]
   -t, --calibration-path <CALIBRATION_PATH>        Custom calibration directory path
   -s, --skip-path <SKIP_PATH>                      Directories to exclude from scanning
   -h, --help                                       Print help
   -V, --version                                    Print version
 ```
 
-**Accurate mode** (`-a`) performs a secondary, fully accurate pass over any flagged directories to get exact entry counts. Be aware that large directories will stall the process entirely for extended periods during this pass.
+**Accurate mode** (`-a`) only affects directories that are *blacklisted and skipped*: instead of reporting them from the size estimate, it reads them in full (`readdir`) to get an exact count. Be aware this is exactly the operation that can stall the process for extended periods on a true black hole. Directories that are actually scanned are already reported with exact counts, so `-a` is rarely needed.
 
-**One-filesystem mode** (`-o`) prevents the scan from descending into mounted filesystems, similar to `find -xdev`. It is enabled by default but can be disabled when scanning across mount points is desired.
+**One-filesystem mode** (`-o`) prevents the scan from descending into mounted filesystems, similar to `find -xdev`. It is enabled by default. Disabling it (`-o false`) scans across mount points; each distinct filesystem encountered is then calibrated separately (or skipped if read-only), and its calibration is cached for the rest of the scan.
 
-**Skipping calibration** is possible by supplying the inode-size-to-entry ratio directly with `-i`. This is useful when the ratio is already known from a previous run on the same filesystem.
+**Skipping calibration** is possible by supplying the inode-size-to-entry ratio directly with `-i`. This writes no files and is useful when the ratio is already known from a previous run on the same filesystem.
+
+**Calibration filename length** (`-n`) sets the length of the names used for the temporary calibration files. The default (24) approximates typical real-world entry names so the measured per-entry cost is representative; raise it for filesystems dominated by long names.
 
 Setting `-p 0` disables periodic status updates.
 
@@ -128,9 +133,9 @@ drops the whole run to ~20–40 ms, *faster* than `find`. So the traversal itsel
 was never the bottleneck here; calibration was.
 
 **Cold cache — `findlargedir` wins (~1.3×).** Once the data must come off disk,
-`findlargedir`'s 20-thread parallel walk overlaps the per-directory `stat`
-seeks that single-threaded `find` issues one after another, and that overlap
-more than repays the calibration cost. Disk latency — not CPU — now dominates,
+`findlargedir`'s parallel walk (one worker per CPU by default) overlaps the
+per-directory `stat` seeks that single-threaded `find` issues one after
+another, and that overlap more than repays the calibration cost. Disk latency — not CPU — now dominates,
 which is the state real filesystems are usually in.
 
 And this corpus *understates* the real-world gap, because the kernel tree has

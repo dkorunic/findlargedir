@@ -8,18 +8,20 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use ahash::AHashSet;
+use ahash::{AHashMap, AHashSet};
 use ansi_term::Colour::{Green, Red, Yellow};
 use human_format::Formatter;
 use indicatif::HumanBytes;
+use tempfile::TempDir;
 
 use crate::args::Args;
-use crate::calibrate::Calibration;
+use crate::calibrate::{self, Calibration};
 
 mod engine;
 
@@ -37,10 +39,78 @@ pub const BLACKLIST_COUNT: u64 = 100_000;
 /// Default seconds between progress updates.
 pub const STATUS_SECONDS: u64 = 20;
 
-/// Walks `path` in parallel, flagging directories whose estimated entry
-/// count exceeds the alert/blacklist thresholds, and returns the number of
-/// directories analyzed. A blacklisted subtree is skipped, and the walk
-/// stops early once `shutdown_walk` is set.
+/// Resolves the right `Calibration` per directory's filesystem, since per-entry
+/// geometry differs per fs. The scan-root fs uses the up-front `root` with no
+/// locking (the common path); other filesystems — crossed only when
+/// `--one-filesystem` is off — are calibrated on first encounter and cached.
+struct CalContext<'a> {
+    root_dev: u64,
+    root: Calibration,
+    foreign: Mutex<AHashMap<u64, Calibration>>,
+    shutdown: &'a Arc<AtomicBool>,
+    args: &'a Args,
+}
+
+impl CalContext<'_> {
+    /// Calibration for `dev`, calibrating `sample_path`'s filesystem in place on
+    /// first encounter. Precondition: gate behind the filesystem-boundary check
+    /// so a foreign filesystem that would be skipped is never written to.
+    fn resolve(&self, dev: u64, sample_path: &Path) -> Calibration {
+        if dev == self.root_dev {
+            return self.root;
+        }
+        let mut foreign = self.foreign.lock().unwrap();
+        if let Some(&cal) = foreign.get(&dev) {
+            return cal;
+        }
+        let cal = self.calibrate(sample_path);
+        foreign.insert(dev, cal);
+        cal
+    }
+
+    /// Calibrates the filesystem holding `sample_path` in a temp dir there. A
+    /// fixed `-i` ratio short-circuits without touching the filesystem; an
+    /// unwritable filesystem or a failed calibration disables flagging for it.
+    fn calibrate(&self, sample_path: &Path) -> Calibration {
+        const DISABLED: Calibration =
+            Calibration { per_entry: 0, overhead: 0 };
+
+        if self.args.size_inode_ratio > 0 {
+            return Calibration {
+                per_entry: self.args.size_inode_ratio,
+                overhead: 0,
+            };
+        }
+
+        if calibrate::is_read_only(sample_path) {
+            println!(
+                "Skipping calibration on read-only filesystem at {}; \
+                 size-based flagging disabled there",
+                sample_path.display()
+            );
+            return DISABLED;
+        }
+
+        let tmp = match TempDir::new_in(sample_path) {
+            Ok(t) => t,
+            Err(e) => {
+                println!(
+                    "Warning: cannot calibrate filesystem at {} ({e}); \
+                     size-based flagging disabled there",
+                    sample_path.display()
+                );
+                return DISABLED;
+            }
+        };
+        calibrate::get_inode_ratio(tmp.path(), self.shutdown, self.args)
+            .unwrap_or(DISABLED)
+    }
+}
+
+/// Walks `path` in parallel and returns the number of directories analyzed.
+/// Each descended directory is flagged on its exact entry count; a subtree whose
+/// *estimated* count exceeds the blacklist threshold is skipped unread (and
+/// reported from the estimate). The walk stops early once `shutdown_walk` is set.
 pub fn parallel_search(
     path: &Path,
     path_metadata: &Metadata,
@@ -75,9 +145,18 @@ pub fn parallel_search(
         (tx, handle)
     });
 
-    let root_dev = path_metadata.dev();
+    let cal = CalContext {
+        root_dev: path_metadata.dev(),
+        root: calibration,
+        foreign: Mutex::new(AHashMap::new()),
+        shutdown: shutdown_walk,
+        args,
+    };
     let classify = |info: engine::DirInfo| {
-        classify_dir(&info, root_dev, calibration, args, skip_path, &dir_count)
+        classify_dir(&info, &cal, args, skip_path, &dir_count)
+    };
+    let report = |path: &Path, ino: u64, size: u64, entries: u64| {
+        report_dir(path, ino, size, entries, args);
     };
 
     engine::walk_dirs(
@@ -86,6 +165,7 @@ pub fn parallel_search(
         args.follow_symlinks,
         shutdown_walk,
         classify,
+        report,
     );
 
     // Stop and join the progress thread before returning.
@@ -97,15 +177,16 @@ pub fn parallel_search(
     dir_count.load(Ordering::Relaxed)
 }
 
-/// Classifies a single directory and returns the resulting
-/// [`engine::Decision`]: skips entries listed in `skip_path`, skips filesystem
-/// boundaries under `--one-filesystem`, and flags directories whose estimated
-/// entry count (`(size − overhead) / per_entry`) crosses the alert or blacklist
-/// thresholds. A blacklist hit returns `Skip`; everything else `Descend`.
+/// Decides, from a single `stat` and before reading, whether to descend a
+/// directory. Skips a subtree whose *estimated* entry count exceeds the
+/// blacklist threshold — the one case the size heuristic must handle alone,
+/// since reading a true black hole is the cost we refuse to pay. Everything else
+/// descends and is judged on its exact count by [`report_dir`]. A blacklisted
+/// (skipped) subtree is reported here from the estimate, or, with `-a`, an
+/// explicit `read_dir` the caller opts into despite the cost.
 fn classify_dir(
     info: &engine::DirInfo,
-    root_dev: u64,
-    calibration: Calibration,
+    cal: &CalContext,
     args: &Args,
     skip_path: &AHashSet<PathBuf>,
     dir_count: &AtomicU64,
@@ -123,7 +204,7 @@ fn classify_dir(
     }
 
     // Don't cross mount points when confined to one filesystem.
-    if args.one_filesystem && info.dev != root_dev {
+    if args.one_filesystem && info.dev != cal.root_dev {
         println!(
             "Identified filesystem boundary at {}, skipping...",
             full_path.display()
@@ -135,8 +216,11 @@ fn classify_dir(
     // Counts only directories that survive every filter above.
     dir_count.fetch_add(1, Ordering::Relaxed);
 
-    // A zero per-entry cost (interrupted or degenerate calibration) disables
-    // flagging entirely.
+    // After the boundary check, so we never calibrate a fs we'd skip.
+    let calibration = cal.resolve(info.dev, full_path);
+
+    // Zero per-entry (interrupted/degenerate calibration) disables skipping;
+    // descend and let the exact count speak.
     if calibration.per_entry == 0 {
         return engine::Decision::Descend;
     }
@@ -144,65 +228,85 @@ fn classify_dir(
         info.size.saturating_sub(calibration.overhead) / calibration.per_entry;
 
     if approx_files > args.blacklist_threshold {
-        print_offender(
-            full_path,
-            info.size,
-            approx_files,
-            args.accurate,
-            true,
-        );
+        let (count, exact) = if args.accurate {
+            match read_dir(full_path) {
+                Ok(r) => (r.count() as u64, true),
+                Err(e) => {
+                    println!(
+                        "Warning: unable to get exact count for {}, using estimate: {e}",
+                        full_path.display()
+                    );
+                    (approx_files, false)
+                }
+            }
+        } else {
+            (approx_files, false)
+        };
+        print_offender(full_path, info.ino, info.size, count, exact, true);
 
         return engine::Decision::Skip;
-    } else if approx_files > args.alert_threshold {
-        print_offender(
-            full_path,
-            info.size,
-            approx_files,
-            args.accurate,
-            false,
-        );
     }
 
     engine::Decision::Descend
 }
 
-/// Prints a flagged directory: its inode size and entry count (exact via
-/// `read_dir` when `accurate`, otherwise the estimate), coloured red for a
-/// blacklist hit (`red_alert`) or yellow for an alert.
+/// Severity of a directory's entry count against the thresholds, or `None` when
+/// it clears both. Both comparisons are strictly `>`, so a count equal to a
+/// threshold does not trip it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tier {
+    Alert,
+    Blacklist,
+}
+
+fn offender_tier(count: u64, alert: u64, blacklist: u64) -> Option<Tier> {
+    if count > blacklist {
+        Some(Tier::Blacklist)
+    } else if count > alert {
+        Some(Tier::Alert)
+    } else {
+        None
+    }
+}
+
+/// Reports a descended directory on its **exact** live entry count, harvested
+/// for free from the enumeration the walk already performs. Red above the
+/// blacklist threshold, yellow above the alert threshold, silent below. Judging
+/// the alert tier on truth rather than the estimate is what stops size-inflated
+/// directories — e.g. ones whose blocks never shrank after deletions — from
+/// raising false alarms.
+fn report_dir(path: &Path, ino: u64, size: u64, entries: u64, args: &Args) {
+    let Some(tier) =
+        offender_tier(entries, args.alert_threshold, args.blacklist_threshold)
+    else {
+        return;
+    };
+    print_offender(path, ino, size, entries, true, tier == Tier::Blacklist);
+}
+
+/// Prints a flagged directory, coloured red for a blacklist hit or yellow for
+/// an alert. An `exact` count prints as-is; an estimate is labelled an upper
+/// bound, since a directory's size is its high-water mark and can exceed the
+/// live count.
 #[allow(clippy::cast_precision_loss)]
 fn print_offender(
     full_path: &Path,
+    ino: u64,
     size: u64,
-    approx_files: u64,
-    accurate: bool,
-    red_alert: bool,
+    count: u64,
+    exact: bool,
+    red: bool,
 ) {
-    let human_files = if accurate {
-        let exact_files = match read_dir(full_path) {
-            Ok(r) => r.count() as u64,
-            Err(e) => {
-                println!(
-                    "Warning: unable to get exact count for {}, falling back to approximation: {e}",
-                    full_path.display()
-                );
-                approx_files
-            }
-        };
-        FORMATTER.with(|f| f.format(exact_files as f64))
-    } else {
-        FORMATTER.with(|f| f.format(approx_files as f64))
-    };
+    let human = FORMATTER.with(|f| f.format(count as f64));
+    let human = if red { Red.paint(human) } else { Yellow.paint(human) };
 
     println!(
-        "Found directory {} with inode size {} and {}{} files",
+        "Found directory {} with inode number {}, inode size {} and {} files{}",
         full_path.display(),
+        ino,
         HumanBytes(size),
-        if accurate { "" } else { "approx " },
-        if red_alert {
-            Red.paint(human_files)
-        } else {
-            Yellow.paint(human_files)
-        }
+        human,
+        if exact { "" } else { " (size-based upper bound)" }
     );
 }
 
@@ -215,7 +319,7 @@ mod tests {
     use ahash::AHashSet;
     use tempfile::TempDir;
 
-    use super::{classify_dir, engine, parallel_search};
+    use super::{CalContext, classify_dir, engine, parallel_search};
     use crate::args::Args;
     use crate::calibrate::Calibration;
 
@@ -229,6 +333,7 @@ mod tests {
             follow_symlinks: false,
             accurate: false,
             calibration_count: 100,
+            calibration_name_length: crate::calibrate::DEFAULT_NAME_LEN,
             size_inode_ratio: 0,
             calibration_path: None,
             skip_path: vec![],
@@ -240,11 +345,140 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
 
+    mod cal_context {
+        use std::sync::Mutex;
+
+        use ahash::AHashMap;
+        use tempfile::TempDir;
+
+        use super::super::CalContext;
+        use super::{make_args, no_shutdown};
+        use crate::calibrate::Calibration;
+
+        /// The scan-root filesystem uses the up-front seed and is never
+        /// recalibrated: `resolve` for the root dev returns the seed and leaves
+        /// the foreign cache empty.
+        #[test]
+        fn root_device_uses_seed_without_calibrating() {
+            let args = make_args(10_000, 100_000, false);
+            let sd = no_shutdown();
+            let cx = CalContext {
+                root_dev: 7,
+                root: Calibration { per_entry: 42, overhead: 9 },
+                foreign: Mutex::new(AHashMap::new()),
+                shutdown: &sd,
+                args: &args,
+            };
+            assert_eq!(
+                cx.resolve(7, std::path::Path::new("/nonexistent")),
+                Calibration { per_entry: 42, overhead: 9 }
+            );
+            assert!(cx.foreign.lock().unwrap().is_empty());
+        }
+
+        /// A foreign filesystem is calibrated on first encounter and cached, so
+        /// a second lookup returns the same value without recalibrating.
+        #[test]
+        fn foreign_device_is_calibrated_and_cached() {
+            let args = make_args(10_000, 100_000, false);
+            let sd = no_shutdown();
+            let cx = CalContext {
+                root_dev: 0,
+                root: Calibration { per_entry: 0, overhead: 0 },
+                foreign: Mutex::new(AHashMap::new()),
+                shutdown: &sd,
+                args: &args,
+            };
+            let tmp = TempDir::new().unwrap();
+            let first = cx.resolve(99, tmp.path());
+            assert!(cx.foreign.lock().unwrap().contains_key(&99));
+            assert_eq!(first, cx.resolve(99, tmp.path()));
+        }
+
+        /// With a fixed `-i` ratio, a foreign filesystem uses that ratio directly
+        /// and no calibration files are created on it.
+        #[test]
+        fn fixed_ratio_skips_calibration_files() {
+            let mut a = (*make_args(10_000, 100_000, false)).clone();
+            a.size_inode_ratio = 21;
+            let sd = no_shutdown();
+            let cx = CalContext {
+                root_dev: 0,
+                root: Calibration { per_entry: 0, overhead: 0 },
+                foreign: Mutex::new(AHashMap::new()),
+                shutdown: &sd,
+                args: &a,
+            };
+            let tmp = TempDir::new().unwrap();
+            assert_eq!(
+                cx.resolve(99, tmp.path()),
+                Calibration { per_entry: 21, overhead: 0 }
+            );
+            assert_eq!(
+                std::fs::read_dir(tmp.path()).unwrap().count(),
+                0,
+                "fixed ratio must not create calibration files"
+            );
+        }
+    }
+
+    mod offender_tier {
+        use super::super::{Tier, offender_tier};
+
+        /// A count clearing the alert threshold is silent — this is what
+        /// suppresses false alarms once the exact count replaces the estimate.
+        #[test]
+        fn below_alert_is_silent() {
+            assert_eq!(offender_tier(7_722, 10_000, 100_000), None);
+        }
+
+        /// Both thresholds are exclusive: a count equal to either does not trip.
+        #[test]
+        fn thresholds_are_exclusive() {
+            assert_eq!(offender_tier(10_000, 10_000, 100_000), None);
+            assert_eq!(
+                offender_tier(100_000, 10_000, 100_000),
+                Some(Tier::Alert)
+            );
+        }
+
+        /// Between the thresholds → alert; strictly above blacklist → blacklist.
+        #[test]
+        fn alert_and_blacklist_bands() {
+            assert_eq!(
+                offender_tier(10_001, 10_000, 100_000),
+                Some(Tier::Alert)
+            );
+            assert_eq!(
+                offender_tier(100_001, 10_000, 100_000),
+                Some(Tier::Blacklist)
+            );
+        }
+    }
+
     mod classify_dir {
         use super::*;
 
         fn cal(per_entry: u64, overhead: u64) -> Calibration {
             Calibration { per_entry, overhead }
+        }
+
+        /// A single-filesystem `CalContext`: `resolve` returns `root` for the
+        /// scan-root device and never calibrates, which is all these tests need
+        /// (per-filesystem calibration is covered in `mod cal_context`).
+        fn ctx<'a>(
+            root_dev: u64,
+            root: Calibration,
+            args: &'a Args,
+            shutdown: &'a Arc<AtomicBool>,
+        ) -> CalContext<'a> {
+            CalContext {
+                root_dev,
+                root,
+                foreign: std::sync::Mutex::new(ahash::AHashMap::new()),
+                shutdown,
+                args,
+            }
         }
 
         /// Overhead is subtracted before dividing: a directory whose *raw* size
@@ -255,13 +489,17 @@ mod tests {
             // per_entry=1, blacklist=100, alert never fires.
             // (1050-1000)/1 = 50 (≤100) → Descend; raw 1050 would Skip.
             let args = make_args(u64::MAX, 100, false);
+            let sd = no_shutdown();
             let count = AtomicU64::new(0);
-            let info =
-                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 1050 };
+            let info = engine::DirInfo {
+                path: Path::new("/d"),
+                dev: 0,
+                ino: 0,
+                size: 1050,
+            };
             let d = classify_dir(
                 &info,
-                0,
-                cal(1, 1000),
+                &ctx(0, cal(1, 1000), &args, &sd),
                 &args,
                 &AHashSet::new(),
                 &count,
@@ -275,13 +513,17 @@ mod tests {
         #[test]
         fn overhead_exceeding_size_saturates_to_zero() {
             let args = make_args(0, 100, false);
+            let sd = no_shutdown();
             let count = AtomicU64::new(0);
-            let info =
-                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 5000 };
+            let info = engine::DirInfo {
+                path: Path::new("/d"),
+                dev: 0,
+                ino: 0,
+                size: 5000,
+            };
             let d = classify_dir(
                 &info,
-                0,
-                cal(1, u64::MAX),
+                &ctx(0, cal(1, u64::MAX), &args, &sd),
                 &args,
                 &AHashSet::new(),
                 &count,
@@ -295,19 +537,40 @@ mod tests {
         #[test]
         fn blacklist_threshold_is_exclusive() {
             let args = make_args(u64::MAX, 100, false);
+            let sd = no_shutdown();
             let skip = AHashSet::new();
             let eq = AtomicU64::new(0);
-            let at_eq =
-                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 100 };
+            let at_eq = engine::DirInfo {
+                path: Path::new("/d"),
+                dev: 0,
+                ino: 0,
+                size: 100,
+            };
             assert!(matches!(
-                classify_dir(&at_eq, 0, cal(1, 0), &args, &skip, &eq),
+                classify_dir(
+                    &at_eq,
+                    &ctx(0, cal(1, 0), &args, &sd),
+                    &args,
+                    &skip,
+                    &eq
+                ),
                 engine::Decision::Descend
             ));
             let above = AtomicU64::new(0);
-            let at_gt =
-                engine::DirInfo { path: Path::new("/d"), dev: 0, size: 101 };
+            let at_gt = engine::DirInfo {
+                path: Path::new("/d"),
+                dev: 0,
+                ino: 0,
+                size: 101,
+            };
             assert!(matches!(
-                classify_dir(&at_gt, 0, cal(1, 0), &args, &skip, &above),
+                classify_dir(
+                    &at_gt,
+                    &ctx(0, cal(1, 0), &args, &sd),
+                    &args,
+                    &skip,
+                    &above
+                ),
                 engine::Decision::Skip
             ));
         }
@@ -316,37 +579,46 @@ mod tests {
         #[test]
         fn skip_path_returns_skip_uncounted() {
             let args = make_args(u64::MAX, u64::MAX, false);
+            let sd = no_shutdown();
             let p = std::path::PathBuf::from("/skip/me");
             let mut skip = AHashSet::new();
             skip.insert(p.clone());
             let count = AtomicU64::new(0);
-            let info = engine::DirInfo { path: &p, dev: 0, size: 9999 };
-            let d = classify_dir(&info, 0, cal(1, 0), &args, &skip, &count);
+            let info =
+                engine::DirInfo { path: &p, dev: 0, ino: 0, size: 9999 };
+            let d = classify_dir(
+                &info,
+                &ctx(0, cal(1, 0), &args, &sd),
+                &args,
+                &skip,
+                &count,
+            );
             assert!(matches!(d, engine::Decision::Skip));
             assert_eq!(count.load(Ordering::Relaxed), 0);
         }
 
         /// Under one-filesystem, a directory on a different device than the
-        /// root is skipped and not counted.
+        /// root is skipped, not counted, and — crucially — not calibrated (the
+        /// foreign cache stays empty, so no files are written to it).
         #[test]
         fn foreign_device_skipped_uncounted_under_one_fs() {
             let args = make_args(u64::MAX, u64::MAX, true);
+            let sd = no_shutdown();
+            let cx = ctx(1, cal(1, 0), &args, &sd);
             let count = AtomicU64::new(0);
             let info = engine::DirInfo {
                 path: Path::new("/mnt"),
                 dev: 99,
+                ino: 0,
                 size: 9999,
             };
-            let d = classify_dir(
-                &info,
-                1,
-                cal(1, 0),
-                &args,
-                &AHashSet::new(),
-                &count,
-            );
+            let d = classify_dir(&info, &cx, &args, &AHashSet::new(), &count);
             assert!(matches!(d, engine::Decision::Skip));
             assert_eq!(count.load(Ordering::Relaxed), 0);
+            assert!(
+                cx.foreign.lock().unwrap().is_empty(),
+                "a skipped foreign filesystem must not be calibrated"
+            );
         }
 
         /// A zero `per_entry` (interrupted/degenerate calibration) disables
@@ -354,16 +626,17 @@ mod tests {
         #[test]
         fn zero_per_entry_descends_without_flagging() {
             let args = make_args(0, 0, false);
+            let sd = no_shutdown();
             let count = AtomicU64::new(0);
             let info = engine::DirInfo {
                 path: Path::new("/d"),
                 dev: 0,
+                ino: 0,
                 size: u64::MAX,
             };
             let d = classify_dir(
                 &info,
-                0,
-                cal(0, 0),
+                &ctx(0, cal(0, 0), &args, &sd),
                 &args,
                 &AHashSet::new(),
                 &count,
@@ -372,26 +645,33 @@ mod tests {
             assert_eq!(count.load(Ordering::Relaxed), 1);
         }
 
-        /// Accurate mode counts entries via `read_dir`; exercise that path on a
-        /// real flagged directory without panicking.
+        /// Accurate mode reads a *blacklisted* (skipped) directory via
+        /// `read_dir` — the one place it still counts exactly, since the walk
+        /// never enumerates a skipped subtree. Exercises that path on a real dir
+        /// without panicking; descended dirs get exact counts for free instead.
         #[test]
-        fn accurate_mode_reads_real_dir() {
+        fn accurate_mode_reads_blacklisted_dir() {
             let tmp = TempDir::new().unwrap();
             std::fs::create_dir(tmp.path().join("child")).unwrap();
-            let mut args = (*make_args(0, u64::MAX, false)).clone();
+            // blacklist=1, ratio=1: estimate 4096 > 1 → skip + accurate read.
+            let mut args = (*make_args(0, 1, false)).clone();
             args.accurate = true;
+            let sd = no_shutdown();
             let count = AtomicU64::new(0);
-            let info =
-                engine::DirInfo { path: tmp.path(), dev: 0, size: 4096 };
+            let info = engine::DirInfo {
+                path: tmp.path(),
+                dev: 0,
+                ino: 0,
+                size: 4096,
+            };
             let d = classify_dir(
                 &info,
-                0,
-                cal(1, 0),
+                &ctx(0, cal(1, 0), &args, &sd),
                 &args,
                 &AHashSet::new(),
                 &count,
             );
-            assert!(matches!(d, engine::Decision::Descend));
+            assert!(matches!(d, engine::Decision::Skip));
             assert_eq!(count.load(Ordering::Relaxed), 1);
         }
     }

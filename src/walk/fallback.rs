@@ -39,13 +39,17 @@ pub(crate) fn open_dir(path: &Path, _follow: bool) -> io::Result<DirHandle> {
     Ok(DirHandle(std::fs::read_dir(path)?))
 }
 
+/// Returns the total entry count alongside invoking `f`; `ReadDir` already omits
+/// `.`/`..`. See the unix leaf for the full contract.
 pub(crate) fn for_each_entry(
     d: DirHandle,
     parent: &Path,
     mut f: impl FnMut(PathBuf, Option<ChildKind>),
-) -> io::Result<()> {
+) -> io::Result<u64> {
+    let mut count = 0;
     for entry in d.0 {
         let entry = entry?;
+        count += 1;
         let kind = entry.file_type().ok().map(map_type);
         // Mirror the unix leaf: don't allocate child paths for entries the
         // walker never traverses.
@@ -54,7 +58,7 @@ pub(crate) fn for_each_entry(
         }
         f(parent.join(entry.file_name()), kind);
     }
-    Ok(())
+    Ok(count)
 }
 
 pub(crate) fn lstat_kind(path: &Path) -> io::Result<ChildKind> {

@@ -40,6 +40,7 @@ pub enum Decision {
 pub struct DirInfo<'a> {
     pub path: &'a Path,
     pub dev: u64,
+    pub ino: u64,
     pub size: u64,
 }
 
@@ -53,19 +54,36 @@ struct Task {
     ancestors: Option<Arc<Vec<(u64, u64)>>>,
 }
 
+/// Scheduler context shared by reference across the scoped worker threads, so
+/// each worker takes just its own queue plus a `&Shared`.
+struct Shared<'a, C, R> {
+    injector: &'a Injector<Task>,
+    stealers: &'a [Stealer<Task>],
+    pending: &'a AtomicUsize,
+    shutdown: &'a AtomicBool,
+    follow_symlinks: bool,
+    classify: &'a C,
+    report: &'a R,
+}
+
 /// Walks `root` in parallel, calling `classify` exactly once per directory
-/// (including `root`). A directory's children are enumerated and queued only
-/// when the classifier returns `Decision::Descend`. Non-directory entries are
+/// (including `root`) to decide — from a single `stat`, before reading — whether
+/// to enumerate its children. For each directory that *is* enumerated (i.e.
+/// `Decision::Descend`), `report` is then called once with the directory's exact
+/// entry count, harvested for free from that same enumeration. Skipped subtrees
+/// are never read, so `report` never fires for them. Non-directory entries are
 /// ignored; stat/open errors skip that directory. The walk stops early once
 /// `shutdown` is set.
-pub fn walk_dirs<C>(
+pub fn walk_dirs<C, R>(
     root: &Path,
     threads: usize,
     follow_symlinks: bool,
     shutdown: &AtomicBool,
     classify: C,
+    report: R,
 ) where
     C: Fn(DirInfo) -> Decision + Sync,
+    R: Fn(&Path, u64, u64, u64) + Sync,
 {
     let n_workers = threads.saturating_sub(1).max(1);
     let injector = Injector::new();
@@ -82,47 +100,41 @@ pub fn walk_dirs<C>(
     let stealers: Vec<Stealer<Task>> =
         workers.iter().map(Worker::stealer).collect();
 
+    let shared = Shared {
+        injector: &injector,
+        stealers: &stealers,
+        pending: &pending,
+        shutdown,
+        follow_symlinks,
+        classify: &classify,
+        report: &report,
+    };
+
     thread::scope(|scope| {
         for worker in workers {
-            let injector = &injector;
-            let stealers = &stealers;
-            let pending = &pending;
-            let classify = &classify;
-            scope.spawn(move || {
-                run_worker(
-                    &worker,
-                    injector,
-                    stealers,
-                    pending,
-                    shutdown,
-                    follow_symlinks,
-                    classify,
-                );
-            });
+            let shared = &shared;
+            scope.spawn(move || run_worker(&worker, shared));
         }
     });
 }
 
-fn run_worker<C: Fn(DirInfo) -> Decision + Sync>(
-    local: &Worker<Task>,
-    injector: &Injector<Task>,
-    stealers: &[Stealer<Task>],
-    pending: &AtomicUsize,
-    shutdown: &AtomicBool,
-    follow_symlinks: bool,
-    classify: &C,
-) {
+fn run_worker<C, R>(local: &Worker<Task>, shared: &Shared<C, R>)
+where
+    C: Fn(DirInfo) -> Decision + Sync,
+    R: Fn(&Path, u64, u64, u64) + Sync,
+{
     let backoff = Backoff::new();
     loop {
-        if shutdown.load(Ordering::Relaxed) {
+        if shared.shutdown.load(Ordering::Relaxed) {
             return;
         }
-        if let Some(task) = find_task(local, injector, stealers) {
+        if let Some(task) = find_task(local, shared.injector, shared.stealers)
+        {
             backoff.reset();
-            process(&task, local, pending, follow_symlinks, classify);
-            pending.fetch_sub(1, Ordering::SeqCst);
+            process(&task, local, shared);
+            shared.pending.fetch_sub(1, Ordering::SeqCst);
         } else {
-            if pending.load(Ordering::SeqCst) == 0 {
+            if shared.pending.load(Ordering::SeqCst) == 0 {
                 return;
             }
             backoff.snooze();
@@ -146,13 +158,11 @@ fn find_task(
     })
 }
 
-fn process<C: Fn(DirInfo) -> Decision + Sync>(
-    task: &Task,
-    local: &Worker<Task>,
-    pending: &AtomicUsize,
-    follow_symlinks: bool,
-    classify: &C,
-) {
+fn process<C, R>(task: &Task, local: &Worker<Task>, shared: &Shared<C, R>)
+where
+    C: Fn(DirInfo) -> Decision + Sync,
+    R: Fn(&Path, u64, u64, u64) + Sync,
+{
     // Decide from a single stat before opening — this is what lets a black-hole
     // subtree be skipped without ever reading it. A stat failure (permissions,
     // races) drops the directory: with no size there is nothing to classify, so
@@ -176,7 +186,9 @@ fn process<C: Fn(DirInfo) -> Decision + Sync>(
         return;
     }
 
-    if let Decision::Skip = classify(DirInfo { path: &task.path, dev, size }) {
+    if let Decision::Skip =
+        (shared.classify)(DirInfo { path: &task.path, dev, ino, size })
+    {
         return;
     }
 
@@ -190,7 +202,7 @@ fn process<C: Fn(DirInfo) -> Decision + Sync>(
         Arc::new(v)
     });
 
-    let _ = platform::for_each_entry(dir, &task.path, |path, kind| {
+    let entries = platform::for_each_entry(dir, &task.path, |path, kind| {
         let kind = match kind {
             Some(k) => k,
             // DT_UNKNOWN: resolve the entry's own type; skip on failure.
@@ -201,13 +213,18 @@ fn process<C: Fn(DirInfo) -> Decision + Sync>(
         };
         let follow = match kind {
             ChildKind::Dir => false,
-            ChildKind::Symlink if follow_symlinks => true,
+            ChildKind::Symlink if shared.follow_symlinks => true,
             // Plain files, sockets, etc., and unfollowed symlinks: skip.
             _ => return,
         };
-        pending.fetch_add(1, Ordering::SeqCst);
+        shared.pending.fetch_add(1, Ordering::SeqCst);
         local.push(Task { path, follow, ancestors: child_ancestors.clone() });
-    });
+    })
+    // A read error mid-enumeration yields a partial (under-)count; reporting it
+    // is harmless and the alternative is dropping the directory entirely.
+    .unwrap_or(0);
+
+    (shared.report)(&task.path, ino, size, entries);
 }
 
 #[cfg(test)]
@@ -221,10 +238,17 @@ mod tests {
     fn collect(root: &Path, threads: usize, follow: bool) -> Vec<PathBuf> {
         let sink = Mutex::new(Vec::new());
         let shutdown = AtomicBool::new(false);
-        walk_dirs(root, threads, follow, &shutdown, |info| {
-            sink.lock().unwrap().push(info.path.to_path_buf());
-            Decision::Descend
-        });
+        walk_dirs(
+            root,
+            threads,
+            follow,
+            &shutdown,
+            |info| {
+                sink.lock().unwrap().push(info.path.to_path_buf());
+                Decision::Descend
+            },
+            |_, _, _, _| {},
+        );
         sink.into_inner().unwrap()
     }
 
@@ -298,18 +322,30 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("big/child")).unwrap();
         let sink = Mutex::new(Vec::new());
         let shutdown = AtomicBool::new(false);
-        walk_dirs(tmp.path(), 4, false, &shutdown, |info| {
-            sink.lock().unwrap().push(info.path.to_path_buf());
-            if info.path.ends_with("big") {
-                Decision::Skip
-            } else {
-                Decision::Descend
-            }
-        });
+        let reports = Mutex::new(Vec::new());
+        walk_dirs(
+            tmp.path(),
+            4,
+            false,
+            &shutdown,
+            |info| {
+                sink.lock().unwrap().push(info.path.to_path_buf());
+                if info.path.ends_with("big") {
+                    Decision::Skip
+                } else {
+                    Decision::Descend
+                }
+            },
+            |path, _, _, _| reports.lock().unwrap().push(path.to_path_buf()),
+        );
         let got = sink.into_inner().unwrap();
         assert!(got.iter().any(|p| p.ends_with("big")));
         // The subtree under a Skip is never opened.
         assert!(!got.iter().any(|p| p.ends_with("child")));
+        // A skipped directory is never enumerated, so it is never reported.
+        assert!(
+            !reports.into_inner().unwrap().iter().any(|p| p.ends_with("big"))
+        );
     }
 
     #[test]
@@ -318,12 +354,56 @@ mod tests {
         std::fs::create_dir(tmp.path().join("a")).unwrap();
         let sink = Mutex::new(Vec::new());
         let shutdown = AtomicBool::new(true);
-        walk_dirs(tmp.path(), 4, false, &shutdown, |info| {
-            sink.lock().unwrap().push(info.path.to_path_buf());
-            Decision::Descend
-        });
+        walk_dirs(
+            tmp.path(),
+            4,
+            false,
+            &shutdown,
+            |info| {
+                sink.lock().unwrap().push(info.path.to_path_buf());
+                Decision::Descend
+            },
+            |_, _, _, _| {},
+        );
         // Workers see shutdown at the top of the loop and return at once.
         assert!(sink.into_inner().unwrap().is_empty());
+    }
+
+    /// Every descended directory is reported with its real inode number and its
+    /// exact live entry count (files + subdirs), both harvested for free from the
+    /// `stat` + enumeration the walk already performs.
+    #[test]
+    fn reports_inode_and_exact_count_per_descended_dir() {
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = TempDir::new().unwrap();
+        for f in ["a.txt", "b.txt", "c.txt"] {
+            std::fs::write(tmp.path().join(f), b"x").unwrap();
+        }
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        std::fs::write(tmp.path().join("sub/d.txt"), b"x").unwrap();
+        std::fs::write(tmp.path().join("sub/e.txt"), b"x").unwrap();
+
+        let reports = Mutex::new(Vec::new());
+        let shutdown = AtomicBool::new(false);
+        walk_dirs(
+            tmp.path(),
+            4,
+            false,
+            &shutdown,
+            |_| Decision::Descend,
+            |path, ino, _, n| {
+                reports.lock().unwrap().push((path.to_path_buf(), ino, n));
+            },
+        );
+
+        let got = reports.into_inner().unwrap();
+        let root_ino = std::fs::metadata(tmp.path()).unwrap().ino();
+        // root: 3 files + 1 subdir = 4 entries, with its real inode; sub: 2.
+        assert!(got.iter().any(|(p, ino, n)| p == tmp.path()
+            && *ino == root_ino
+            && *n == 4));
+        assert!(got.iter().any(|(p, _, n)| p.ends_with("sub") && *n == 2));
     }
 
     #[cfg(unix)]
