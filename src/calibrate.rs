@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Error};
 use fs_err as fs;
 
-use crate::{args, progress};
+use crate::args;
 
 /// Default `-c` batch size; the effective batch is at least [`MIN_BATCH`].
 pub const DEFAULT_TEST_COUNT: u64 = 100;
@@ -209,8 +209,6 @@ pub fn get_inode_ratio(
         fs_type_name(mount)
     );
 
-    let pb = progress::new_spinner("Creating test files in progress...");
-
     // `-c` floors the initial batch; doubling it each round (geometric sampling)
     // spreads samples across the large-N range the ratio is extrapolated onto.
     let mut batch = args.calibration_count.max(MIN_BATCH);
@@ -258,8 +256,6 @@ pub fn get_inode_ratio(
             batch = batch.saturating_mul(2);
         }
     })();
-
-    pb.finish_with_message("Done.");
 
     // Propagate real errors; ignore the sentinel emitted on shutdown.
     if let Err(e) = res
