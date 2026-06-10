@@ -15,9 +15,9 @@ use std::thread;
 use std::time::Duration;
 
 use ahash::{AHashMap, AHashSet};
-use ansi_term::Colour::{Green, Red, Yellow};
 use human_format::Formatter;
 use indicatif::{HumanBytes, ProgressBar};
+use owo_colors::OwoColorize;
 use tempfile::TempDir;
 
 use crate::args::Args;
@@ -155,7 +155,7 @@ pub fn parallel_search(
                 let count = dir_count.load(Ordering::Relaxed);
                 println!(
                     "Processed {} directories so far, next update in {} seconds",
-                    Green.paint(count.to_string()),
+                    count.to_string().green(),
                     sleep_delay
                 );
             }
@@ -227,7 +227,7 @@ fn classify_dir(
     // Don't cross mount points when confined to one filesystem.
     if args.one_filesystem && info.dev != cal.root_dev {
         println!(
-            "Identified filesystem boundary at {}, filesystem {}, skipping (use -o false to cross)",
+            "Identified filesystem boundary at {}, filesystem {}, skipping (use -m/--cross-filesystem to cross)",
             full_path.display(),
             calibrate::fs_type_name(full_path)
         );
@@ -320,7 +320,8 @@ fn print_offender(
     red: bool,
 ) {
     let human = FORMATTER.with(|f| f.format(count as f64));
-    let human = if red { Red.paint(human) } else { Yellow.paint(human) };
+    let human =
+        if red { human.red().to_string() } else { human.yellow().to_string() };
 
     println!(
         "Found directory {} with inode number {}, inode size {} and {} files{}",

@@ -18,7 +18,7 @@ The program identifies these directories using **calibration** — it creates fi
 
 It then uses that ratio to **estimate** each directory's entry count from a single `O(1)` `stat`, so it can decide whether to descend a directory or **skip** an entire subtree — without ever performing the expensive full directory read that would freeze the process on a black hole. Crucially, every directory it *does* descend into is reported with its **exact** entry count, harvested for free from the traversal the walk already performs; the size estimate is reserved for the skip decision and for reporting the skipped subtrees (as a size-based upper bound, since a directory's size is its high-water mark). While many tools exist to scan filesystems (`find`, `du`, `ncdu`, etc.), none of them use heuristics to skip expensive lookups because they are designed for **full accuracy**. This tool is instead designed to use heuristics and alert on problems **without getting stuck** on the very directories it is trying to find.
 
-By default, the program **does not follow symlinks** (use `-f` to enable). Calibration needs **read/write permissions** to create temporary files and measure the resulting inode size; a **read-only filesystem is skipped** (scanned without size-based flagging) rather than treated as an error. When crossing mount points (`-o false`), **each filesystem is calibrated separately**, since per-entry geometry differs across filesystem types.
+By default, the program **does not follow symlinks** (use `-f` to enable). Calibration needs **read/write permissions** to create temporary files and measure the resulting inode size; a **read-only filesystem is skipped** (scanned without size-based flagging) rather than treated as an error. When crossing mount points (`-m`/`--cross-filesystem`), **each filesystem is calibrated separately**, since per-entry geometry differs across filesystem types.
 
 ![Demo](demo.gif)
 
@@ -38,25 +38,26 @@ Arguments:
   <PATH>...  Paths to check for large directories
 
 Options:
-  -f, --follow-symlinks <FOLLOW_SYMLINKS>          Follow symlinks [default: false] [possible values: true, false]
-  -a, --accurate <ACCURATE>                        Perform accurate directory entry counting [default: false] [possible values: true, false]
-  -o, --one-filesystem <ONE_FILESYSTEM>            Do not cross mount points [default: true] [possible values: true, false]
-  -c, --calibration-count <CALIBRATION_COUNT>      Calibration batch size (raised to a 1000-file minimum) [default: 100]
-  -n, --calibration-name-length <NAME_LENGTH>      Calibration filename length, matched to typical entries (1..=255) [default: 24]
-  -A, --alert-threshold <ALERT_THRESHOLD>          Alert threshold count (print the estimate) [default: 10000]
-  -B, --blacklist-threshold <BLACKLIST_THRESHOLD>  Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
-  -x, --threads <THREADS>                          Number of threads to use when scanning (2..=65535) [default: available CPUs]
-  -p, --updates <UPDATES>                          Seconds between status updates, set to 0 to disable [default: 20]
-  -i, --size-inode-ratio <SIZE_INODE_RATIO>        Skip calibration and use this bytes-per-entry ratio directly (e.g. the value a prior run reported) [default: 0]
-  -t, --calibration-path <CALIBRATION_PATH>        Custom calibration directory path
-  -s, --skip-path <SKIP_PATH>                      Directories to exclude from scanning
-  -h, --help                                       Print help
-  -V, --version                                    Print version
+  -f, --follow-symlinks              Follow symlinks
+  -a, --accurate                     Perform accurate directory entry counting
+  -o, --one-filesystem               Do not cross mount points (default)
+  -m, --cross-filesystem             Cross mount points (calibrate each filesystem)
+  -c, --calibration-count <N>        Calibration batch size (raised to a 1000-file minimum) [default: 100]
+  -n, --calibration-name-length <N>  Calibration filename length (1..=255) [default: 24]
+  -A, --alert-threshold <N>          Alert threshold count (print the estimate) [default: 10000]
+  -B, --blacklist-threshold <N>      Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
+  -x, --threads <N>                  Number of threads to use when scanning (2..=65535) [default: CPUs]
+  -p, --updates <SECONDS>            Seconds between status updates, set to 0 to disable [default: 20]
+  -i, --size-inode-ratio <N>         Skip calibration and use this bytes-per-entry ratio directly [default: 0]
+  -t, --calibration-path <PATH>      Custom calibration directory path
+  -s, --skip-path <PATH>             Directories to exclude from scanning (repeatable)
+  -h, --help                         Print help
+  -V, --version                      Print version
 ```
 
 **Accurate mode** (`-a`) only affects directories that are *blacklisted and skipped*: instead of reporting them from the size estimate, it reads them in full (`readdir`) to get an exact count. Be aware this is exactly the operation that can stall the process for extended periods on a true black hole. Directories that are actually scanned are already reported with exact counts, so `-a` is rarely needed.
 
-**One-filesystem mode** (`-o`) prevents the scan from descending into mounted filesystems, similar to `find -xdev`. It is enabled by default. Disabling it (`-o false`) scans across mount points; each distinct filesystem encountered is then calibrated separately (or skipped if read-only), and its calibration is cached for the rest of the scan.
+**One-filesystem mode** (`-o`) prevents the scan from descending into mounted filesystems, similar to `find -xdev`. It is enabled by default, so `-o` is only ever explicit. Passing `-m`/`--cross-filesystem` instead scans across mount points; each distinct filesystem encountered is then calibrated separately (or skipped if read-only), and its calibration is cached for the rest of the scan.
 
 **Skipping calibration** is possible by supplying the inode-size-to-entry ratio directly with `-i`. This writes no files and is useful when the ratio is already known from a previous run on the same filesystem.
 

@@ -11,7 +11,6 @@ use std::time::Instant;
 
 use ahash::AHashSet;
 use anyhow::{Context, Error, Result};
-use clap::Parser;
 use fdlimit::{Outcome, raise_fd_limit};
 use fs_err as fs;
 use indicatif::HumanDuration;
