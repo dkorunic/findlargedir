@@ -10,7 +10,10 @@ cargo clippy -- -D warnings
 cargo test
 cargo build --release
 cargo bench --bench walk   # findlargedir vs GNU find; clones Linux kernel into benches/linux_root (BENCH_WALK_DIR to reuse). Warm + cold groups; cold drops caches via /proc/sys/vm/drop_caches (needs root, else skipped)
+scdoc < man/findlargedir.1.scd > man/findlargedir.1   # regenerate the man page
 ```
+
+Man page: authored in `man/findlargedir.1.scd` (scdoc), generated roff committed and bundled into release archives via `dist-workspace.toml` `include`. `OPTIONS`/`EXAMPLES` are hand-maintained — keep in sync with `args.rs` `print_help` and the README.
 
 ## Pinning
 

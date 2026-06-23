@@ -25,6 +25,9 @@ cargo fmt
 # Check formatting without modifying
 cargo fmt -- --check
 
+# Regenerate the man page after editing man/findlargedir.1.scd
+scdoc < man/findlargedir.1.scd > man/findlargedir.1
+
 # Benchmark findlargedir vs GNU find (Criterion, harness = false)
 # Heavy: shallow-clones the Linux kernel into benches/linux_root on first run.
 # Set BENCH_WALK_DIR to reuse a checkout; shorten a run with --measurement-time.
@@ -36,6 +39,8 @@ cargo bench --bench walk -- walk_linux_kernel_cold   # cold-cache group only (ro
 ```
 
 `edition = "2024"`, `rust-version = "1.88.0"` (MSRV). There is **no** `rust-toolchain.toml` — the toolchain is not pinned, so pin it manually if building elsewhere. Lint levels are centralized in `Cargo.toml`'s `[lints]` table (`clippy::all = deny`, `clippy::pedantic = warn`, `clippy::redundant_clone = deny`, `nonstandard_style = deny`).
+
+The man page is authored in `man/findlargedir.1.scd` ([scdoc](https://git.sr.ht/~sircmpwn/scdoc) markup); the generated roff `man/findlargedir.1` is committed and bundled into release archives via `dist-workspace.toml`'s `include`. Its `OPTIONS`/`EXAMPLES` sections are hand-maintained, so **keep them in sync with `args.rs`'s `print_help` and the README** when adding or changing flags, then regenerate with the command above.
 
 A sibling `AGENTS.md` carries the same guidance in condensed form; keep the two in sync when editing either.
 

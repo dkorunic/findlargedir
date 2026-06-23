@@ -15,3 +15,6 @@ targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-da
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# Extra files bundled into each release archive (alongside the binary), for
+# packagers to install — e.g. the man page into /usr/share/man/man1.
+include = ["man/findlargedir.1"]
