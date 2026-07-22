@@ -47,8 +47,8 @@ not followed and mount points are not crossed.\& The thread budget defaults to
 the logical CPU count, with one thread reserved for coordination (see \fB\-x\fR).\&
 .PP
 Directories nested deeper than PATH_MAX are still traversed on Unix, by
-descending component\-by\-component from the scan root's file descriptor.\&
-Directories that cannot be stat'ed or opened (permissions, races) are counted
+descending component\-by\-component from the scan root'\&s file descriptor.\&
+Directories that cannot be stat'\&ed or opened (permissions, races) are counted
 and summarised at the end of each scan.\&
 .PP
 Calibration writes to the target filesystem, so \fBfindlargedir\fR generally needs
@@ -80,7 +80,7 @@ since per\-entry inode geometry differs between filesystems.\&
 .RS 4
 Total thread budget (2.\&.\&=65535).\& One thread is reserved for
 coordination (calibration, output, progress), so \fIN\fR threads spawn
-\fIN\fR-1 walk workers.\& Default: the logical CPU count.\&
+\fIN\fR\-1 walk workers.\& Default: the logical CPU count.\&
 .PP
 .RE
 \fB\-s\fR, \fB\-\-skip\-path\fR \fIPATH\fR
@@ -89,7 +89,7 @@ Exclude \fIPATH\fR from scanning (repeatable).\& A skip path that is absent on
 this host is accepted, so virtual or optional paths can be listed
 unconditionally.\& Matching is literal after normalisation: with \fB\-f\fR, a
 directory reached through a symbolic link is matched by the path it was
-reached through, not by the link's target.\&
+reached through, not by the link'\&s target.\&
 .PP
 .RE
 .SS Detection thresholds
@@ -276,11 +276,11 @@ a \fIPATH\fR that is not an existing directory, or no \fIPATH\fR at all.\&
 .PP
 A scan root whose own path exceeds PATH_MAX cannot be traversed (the anchor
 for component\-wise descent cannot be opened); scan from a shorter path
-instead.\& On platforms without O_PATH (macOS), that descent also requires
-read permission on every transit directory; Linux needs none.\&
+instead.\& On platforms without O_PATH (macOS), that descent also requires read
+permission on every transit directory; Linux needs none.\&
 .PP
 If \fBfindlargedir\fR is killed with SIGKILL during calibration, its temporary
-directory (a name beginning with .tmp, holding up to 50,000 empty files) may
+directory (a name beginning with .\&tmp, holding up to 50,000 empty files) may
 be left behind in the calibration directory.\&
 .PP
 Bugs and patches: <https://github.\&com/dkorunic/findlargedir>.\&

@@ -15,12 +15,12 @@ rust-version = "1.88.0"
 [dependencies]
 mimalloc = "0.1.52"
 tempfile = "3.27.0"
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 human_format = "1.2.1"
 lexopt = "0.3.2"
 owo-colors = "4.3.0"
-fs-err = "3.3.0"
-indicatif = { version = "0.18.4", features = ["rayon"] }
+fs-err = "3.3.1"
+indicatif = { version = "0.18.6", features = ["rayon"] }
 fdlimit = "0.3.0"
 ahash = "0.8.12"
 signal-hook = "0.4.4"
