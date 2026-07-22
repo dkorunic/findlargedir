@@ -30,9 +30,15 @@ multi-million-entry directory can wedge a process in uninterruptible sleep —
   additionally reported on its *exact* live entry count, harvested for free
   from the same enumeration the walk already performs.
 
-Each _PATH_ must be an existing directory. By default symbolic links are not
-followed and mount points are not crossed; one worker thread is spawned per
-logical CPU.
+Each _PATH_ must be an existing directory. A _PATH_ nested inside an earlier
+_PATH_ is skipped rather than scanned twice. By default symbolic links are
+not followed and mount points are not crossed. The thread budget defaults to
+the logical CPU count, with one thread reserved for coordination (see *-x*).
+
+Directories nested deeper than PATH_MAX are still traversed on Unix, by
+descending component-by-component from the scan root's file descriptor.
+Directories that cannot be stat'ed or opened (permissions, races) are counted
+and summarised at the end of each scan.
 
 Calibration writes to the target filesystem, so *findlargedir* generally needs
 to run as a user who can create files there (often *root*). A read-only or
@@ -54,12 +60,16 @@ aborting the run; *-i* skips calibration entirely.
 	since per-entry inode geometry differs between filesystems.
 
 *-x*, *--threads* _N_
-	Number of worker threads (2..=65535). Default: the logical CPU count.
+	Total thread budget (2..=65535). One thread is reserved for
+	coordination (calibration, output, progress), so _N_ threads spawn
+	_N_-1 walk workers. Default: the logical CPU count.
 
 *-s*, *--skip-path* _PATH_
 	Exclude _PATH_ from scanning (repeatable). A skip path that is absent on
 	this host is accepted, so virtual or optional paths can be listed
-	unconditionally.
+	unconditionally. Matching is literal after normalisation: with *-f*, a
+	directory reached through a symbolic link is matched by the path it was
+	reached through, not by the link's target.
 
 ## Detection thresholds
 
@@ -91,11 +101,15 @@ aborting the run; *-i* skips calibration entirely.
 
 *-t*, *--calibration-path* _PATH_
 	Calibrate in _PATH_ instead of the scan root (for example a writable
-	directory on the same filesystem).
+	directory on the same filesystem). _PATH_ must reside on the same
+	filesystem as the scan root; *findlargedir* refuses to run otherwise,
+	since a ratio fitted on the wrong filesystem would misdrive the
+	subtree-skip heuristic.
 
 *-i*, *--size-inode-ratio* _N_
 	Skip calibration and use _N_ bytes per entry directly (fixed overhead is
-	taken as zero). Default: _0_ (calibrate normally).
+	taken as zero). Overrides *-t*; combining the two produces a warning.
+	Default: _0_ (calibrate normally).
 
 ## Output
 
@@ -150,11 +164,11 @@ even for blacklisted directories:
 findlargedir -A 1000 -B 50000 -a /srv
 ```
 
-Calibrate in a writable scratch directory when the scan root is awkward to
-write into:
+Calibrate in a writable scratch directory on the same filesystem when the scan
+root itself is awkward to write into:
 
 ```
-findlargedir -t /var/tmp /mnt/objectstore
+findlargedir -t /srv/scratch /srv/objectstore
 ```
 
 Run quietly, without periodic progress updates:
@@ -163,6 +177,18 @@ Run quietly, without periodic progress updates:
 findlargedir -p 0 /data
 ```
 
+# SIGNALS
+
+*SIGINT*, *SIGTERM*
+	Set the shutdown flag: calibration and the walk stop at the next
+	opportunity (the next calibration file or directory entry) and the
+	program exits cleanly. A second registered signal (the same one
+	repeated, or the other) exits immediately with status 128+signo.
+
+*SIGQUIT*
+	Not handled; the default action applies (terminate with a core dump).
+	Use it when the process is wedged and a core dump is wanted.
+
 # EXIT STATUS
 
 *0*
@@ -170,13 +196,27 @@ findlargedir -p 0 /data
 
 *1*
 	A runtime error occurred — for example the alert threshold was not strictly
-	less than the blacklist threshold, or the interrupt handler could not be
+	less than the blacklist threshold, the *-t* directory is on a different
+	filesystem than the scan root, or the interrupt handler could not be
 	installed.
 
 *2*
 	Invalid command-line usage — an unrecognized option, a bad numeric value, a
 	calibration name length outside 1..=255, a thread count outside 2..=65535,
 	a _PATH_ that is not an existing directory, or no _PATH_ at all.
+
+# BUGS
+
+A scan root whose own path exceeds PATH_MAX cannot be traversed (the anchor
+for component-wise descent cannot be opened); scan from a shorter path
+instead. On platforms without O_PATH (macOS), that descent also requires read
+permission on every transit directory; Linux needs none.
+
+If *findlargedir* is killed with SIGKILL during calibration, its temporary
+directory (a name beginning with .tmp, holding up to 50,000 empty files) may
+be left behind in the calibration directory.
+
+Bugs and patches: <https://github.com/dkorunic/findlargedir>.
 
 # SEE ALSO
 

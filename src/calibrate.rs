@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: MIT
 
-use std::fs::File;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,6 +45,12 @@ pub struct Calibration {
     pub overhead: u64,
 }
 
+impl Calibration {
+    /// Flagging-disabled sentinel: degenerate filesystem, read-only or
+    /// unwritable calibration target, interrupted or failed calibration.
+    pub const DISABLED: Self = Self { per_entry: 0, overhead: 0 };
+}
+
 /// Least-squares-fits `size ≈ overhead + per_entry·n` over the large-N half of
 /// the `(n_files, dir_size)` samples. The ratio is extrapolated onto
 /// million-entry directories, so only the asymptotic slope matters; a global fit
@@ -69,7 +73,7 @@ fn fit_calibration(points: &[(u64, u64)]) -> Calibration {
 
     let n = window.len() as f64;
     if n < 2.0 {
-        return Calibration { per_entry: 0, overhead: 0 };
+        return Calibration::DISABLED;
     }
 
     let mean_x = window.iter().map(|&(x, _)| x as f64).sum::<f64>() / n;
@@ -83,12 +87,12 @@ fn fit_calibration(points: &[(u64, u64)]) -> Calibration {
         den += dx * dx;
     }
     if den == 0.0 {
-        return Calibration { per_entry: 0, overhead: 0 };
+        return Calibration::DISABLED;
     }
 
     let slope = num / den;
     if slope <= 0.5 {
-        return Calibration { per_entry: 0, overhead: 0 };
+        return Calibration::DISABLED;
     }
 
     let intercept = mean_y - slope * mean_x;
@@ -135,6 +139,7 @@ pub fn is_read_only(_path: &Path) -> bool {
 /// Human name for a statfs filesystem magic number; the raw hex for anything
 /// not in the table. Kept pure (separate from the `statfs` call) so the mapping
 /// is testable without a real mount.
+#[cfg(any(unix, test))]
 fn fs_type_from_magic(magic: u64) -> String {
     let name = match magic {
         0xEF53 => "ext2/3/4",
@@ -159,6 +164,7 @@ fn fs_type_from_magic(magic: u64) -> String {
         0x4D44 => "vfat",
         0x5346_544E => "ntfs",
         0x2011_BAB0 => "exfat",
+        0x1A => "apfs",
         0x9FA0 => "proc",
         0x6265_6572 => "sysfs",
         0x6367_7270 => "cgroup2",
@@ -169,8 +175,10 @@ fn fs_type_from_magic(magic: u64) -> String {
 
 /// Filesystem type holding `path`, derived from its statfs magic (see
 /// [`fs_type_from_magic`]). `"unknown"` if the filesystem cannot be queried.
+// `f_type` is signed on Linux (cast_sign_loss) and u32 on macOS
+// (cast_lossless); the `as u64` cast is the common denominator.
 #[cfg(unix)]
-#[allow(clippy::cast_sign_loss)]
+#[allow(clippy::cast_sign_loss, clippy::cast_lossless)]
 pub fn fs_type_name(path: &Path) -> String {
     rustix::fs::statfs(path).map_or_else(
         |_| "unknown".to_owned(),
@@ -218,12 +226,13 @@ pub fn get_inode_ratio(
     let name_len = args.calibration_name_length;
 
     // The empty-directory baseline anchors the regression's overhead term.
-    let mut points: Vec<(u64, u64)> = vec![(
-        0,
-        fs::metadata(test_path)
-            .context("Unable to retrieve calibration directory metadata")?
-            .size(),
-    )];
+    let mut points: Vec<(u64, u64)> =
+        vec![(
+            0,
+            crate::compat::dir_size(&fs::metadata(test_path).context(
+                "Unable to retrieve calibration directory metadata",
+            )?),
+        )];
     let mut created: u64 = 0;
 
     let res: Result<(), Error> = (|| {
@@ -239,14 +248,15 @@ pub fn get_inode_ratio(
                 if shutdown.load(Ordering::Relaxed) {
                     return Err(anyhow::anyhow!("shutdown requested"));
                 }
-                File::create(test_path.join(format!("{i:0name_len$}")))
+                fs::File::create(test_path.join(format!("{i:0name_len$}")))
                     .context("Unable to create test file")?;
             }
             created += this_batch;
 
-            let size = fs::metadata(test_path)
-                .context("Unable to retrieve calibration directory metadata")?
-                .size();
+            let size =
+                crate::compat::dir_size(&fs::metadata(test_path).context(
+                    "Unable to retrieve calibration directory metadata",
+                )?);
             points.push((created, size));
 
             if created >= FILE_CAP {
@@ -265,7 +275,7 @@ pub fn get_inode_ratio(
     }
     // Caller's TempDir cleans itself up on drop, so bailing out here is safe.
     if shutdown.load(Ordering::Relaxed) {
-        return Ok(Calibration { per_entry: 0, overhead: 0 });
+        return Ok(Calibration::DISABLED);
     }
 
     let cal = fill_corrected(fit_calibration(&points));
@@ -331,10 +341,7 @@ mod tests {
                 &make_args(100),
             );
 
-            assert_eq!(
-                result.unwrap(),
-                Calibration { per_entry: 0, overhead: 0 }
-            );
+            assert_eq!(result.unwrap(), Calibration::DISABLED);
         }
 
         /// Sanity: calibration completes without error when no shutdown
@@ -456,8 +463,8 @@ mod tests {
         #[test]
         fn preserves_disabled_sentinel() {
             assert_eq!(
-                fill_corrected(Calibration { per_entry: 0, overhead: 0 }),
-                Calibration { per_entry: 0, overhead: 0 }
+                fill_corrected(Calibration::DISABLED),
+                Calibration::DISABLED
             );
         }
     }
@@ -470,6 +477,7 @@ mod tests {
         fn known_magic_maps_to_name() {
             assert_eq!(fs_type_from_magic(0xEF53), "ext2/3/4");
             assert_eq!(fs_type_from_magic(0x0102_1994), "tmpfs");
+            assert_eq!(fs_type_from_magic(0x1A), "apfs");
         }
 
         /// An unrecognized magic falls back to its raw hex value.
@@ -497,10 +505,7 @@ mod tests {
         #[test]
         fn flat_points_are_degenerate() {
             let pts = [(0u64, 4096u64), (1000, 4096), (2000, 4096)];
-            assert_eq!(
-                fit_calibration(&pts),
-                Calibration { per_entry: 0, overhead: 0 }
-            );
+            assert_eq!(fit_calibration(&pts), Calibration::DISABLED);
         }
 
         /// Two points are the minimum viable fit.
@@ -569,14 +574,8 @@ mod tests {
         /// Fewer than two points cannot define a line → degenerate.
         #[test]
         fn fewer_than_two_points_are_degenerate() {
-            assert_eq!(
-                fit_calibration(&[(0, 4096)]),
-                Calibration { per_entry: 0, overhead: 0 }
-            );
-            assert_eq!(
-                fit_calibration(&[]),
-                Calibration { per_entry: 0, overhead: 0 }
-            );
+            assert_eq!(fit_calibration(&[(0, 4096)]), Calibration::DISABLED);
+            assert_eq!(fit_calibration(&[]), Calibration::DISABLED);
         }
     }
 }

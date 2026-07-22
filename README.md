@@ -46,10 +46,10 @@ Options:
   -n, --calibration-name-length <N>  Calibration filename length (1..=255) [default: 24]
   -A, --alert-threshold <N>          Alert threshold count (print the estimate) [default: 10000]
   -B, --blacklist-threshold <N>      Blacklist threshold count (print the estimate and stop deeper scan) [default: 100000]
-  -x, --threads <N>                  Number of threads to use when scanning (2..=65535) [default: CPUs]
+  -x, --threads <N>                  Total thread budget; one is reserved for coordination, N-1 workers scan (2..=65535) [default: CPUs]
   -p, --updates <SECONDS>            Seconds between status updates, set to 0 to disable [default: 20]
   -i, --size-inode-ratio <N>         Skip calibration and use this bytes-per-entry ratio directly [default: 0]
-  -t, --calibration-path <PATH>      Custom calibration directory path
+  -t, --calibration-path <PATH>      Custom calibration directory path (must be on the same filesystem as PATH)
   -s, --skip-path <PATH>             Directories to exclude from scanning (repeatable)
   -h, --help                         Print help
   -V, --version                      Print version
@@ -59,11 +59,15 @@ Options:
 
 **One-filesystem mode** (`-o`) prevents the scan from descending into mounted filesystems, similar to `find -xdev`. It is enabled by default, so `-o` is only ever explicit. Passing `-m`/`--cross-filesystem` instead scans across mount points; each distinct filesystem encountered is then calibrated separately (or skipped if read-only), and its calibration is cached for the rest of the scan.
 
-**Skipping calibration** is possible by supplying the inode-size-to-entry ratio directly with `-i`. This writes no files and is useful when the ratio is already known from a previous run on the same filesystem.
+**Deep trees** past `PATH_MAX` are still traversed on Unix: the walker descends component-by-component from the scan root's file descriptor when a full path becomes unusable. Directories that cannot be stat'ed or opened (permissions, races) are counted and summarised at the end of each scan.
+
+**Skipping calibration** is possible by supplying the inode-size-to-entry ratio directly with `-i`. This writes no files and is useful when the ratio is already known from a previous run on the same filesystem. `-i` overrides `-t`; combining the two produces a warning.
 
 **Calibration filename length** (`-n`) sets the length of the names used for the temporary calibration files. The default (24) approximates typical real-world entry names so the measured per-entry cost is representative; raise it for filesystems dominated by long names.
 
 Setting `-p 0` disables periodic status updates.
+
+**Path handling**: a `<PATH>` nested inside an earlier one is skipped rather than scanned twice. `<PATH>` and `-s` values are normalised (symlinks resolved); matching is literal, so under `-f` a directory reached through a symlink is excluded by the path it was reached through, not the link's target. SIGINT/SIGTERM stop gracefully at the next opportunity (a second registered signal exits immediately); SIGQUIT keeps its default core-dump action.
 
 ## Benchmarks
 

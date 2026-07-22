@@ -7,10 +7,25 @@
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::ChildKind;
 
 pub(crate) struct DirHandle(std::fs::ReadDir);
+
+/// Mirrors the unix leaf's anchor context. Unused here: std has no stable
+/// dirfd API, so >PATH_MAX traversal is unsupported on this platform and such
+/// directories keep failing into the engine's error counters.
+#[allow(dead_code)]
+pub(crate) struct RootCtx<'a> {
+    pub fd: Option<&'a ()>,
+    pub path: &'a Path,
+}
+
+/// Mirrors the unix leaf; nothing to anchor on this platform.
+pub(crate) fn open_root(_root: &Path) -> io::Result<()> {
+    Ok(())
+}
 
 fn path_hash(path: &Path) -> u64 {
     let canon =
@@ -26,6 +41,7 @@ fn path_hash(path: &Path) -> u64 {
 pub(crate) fn stat_dir(
     path: &Path,
     follow: bool,
+    _root: &RootCtx,
 ) -> io::Result<(u64, u64, u64, bool)> {
     let md = if follow {
         std::fs::metadata(path)?
@@ -35,20 +51,32 @@ pub(crate) fn stat_dir(
     Ok((0, path_hash(path), md.len(), md.is_dir()))
 }
 
-pub(crate) fn open_dir(path: &Path, _follow: bool) -> io::Result<DirHandle> {
+pub(crate) fn open_dir(
+    path: &Path,
+    _follow: bool,
+    _root: &RootCtx,
+) -> io::Result<DirHandle> {
     Ok(DirHandle(std::fs::read_dir(path)?))
 }
 
-/// Returns the total entry count alongside invoking `f`; `ReadDir` already omits
-/// `.`/`..`. See the unix leaf for the full contract.
+/// Returns the entry count alongside the enumeration result, invoking `f` per
+/// traversable entry and polling `shutdown` per entry for an early stop;
+/// `ReadDir` already omits `.`/`..`. See the unix leaf for the full contract.
 pub(crate) fn for_each_entry(
     d: DirHandle,
     parent: &Path,
+    shutdown: &AtomicBool,
     mut f: impl FnMut(PathBuf, Option<ChildKind>),
-) -> io::Result<u64> {
+) -> (u64, io::Result<()>) {
     let mut count = 0;
     for entry in d.0 {
-        let entry = entry?;
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => return (count, Err(e)),
+        };
         count += 1;
         let kind = entry.file_type().ok().map(map_type);
         // Mirror the unix leaf: don't allocate child paths for entries the
@@ -58,11 +86,30 @@ pub(crate) fn for_each_entry(
         }
         f(parent.join(entry.file_name()), kind);
     }
-    Ok(count)
+    (count, Ok(()))
 }
 
-pub(crate) fn lstat_kind(path: &Path) -> io::Result<ChildKind> {
+pub(crate) fn lstat_kind(
+    path: &Path,
+    _root: &RootCtx,
+) -> io::Result<ChildKind> {
     Ok(map_type(std::fs::symlink_metadata(path)?.file_type()))
+}
+
+/// Exact live entry count of `path` (no descent). Mirrors the unix leaf; a
+/// mid-read error is propagated for the caller to fall back to the estimate.
+pub(crate) fn count_entries(
+    path: &Path,
+    _follow: bool,
+    _root: &RootCtx,
+    _shutdown: &AtomicBool,
+) -> io::Result<u64> {
+    let mut count = 0;
+    for entry in std::fs::read_dir(path)? {
+        entry?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 fn map_type(ft: std::fs::FileType) -> ChildKind {

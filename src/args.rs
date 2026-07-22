@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -33,7 +34,8 @@ pub struct Args {
     /// Blacklist threshold count (print the estimate and stop deeper scan)
     pub blacklist_threshold: u64,
 
-    /// Number of threads to use when scanning (2..=65535)
+    /// Total thread budget (2..=65535); one thread is reserved for
+    /// coordination, so N threads spawn N-1 walk workers
     pub threads: usize,
 
     /// Seconds between status updates, set to 0 to disable
@@ -132,8 +134,7 @@ impl Args {
                         Some(PathBuf::from(parser.value()?));
                 }
                 Short('s') | Long("skip-path") => {
-                    args.skip_path
-                        .push(parse_skip_paths(&parser.value()?.string()?)?);
+                    args.skip_path.push(parse_skip_paths(parser.value()?)?);
                 }
                 Short('h') | Long("help") => {
                     print_help();
@@ -144,7 +145,7 @@ impl Args {
                     std::process::exit(0);
                 }
                 Value(path) => {
-                    args.path.push(parse_paths(&path.string()?)?);
+                    args.path.push(parse_paths(path)?);
                 }
                 _ => return Err(arg.unexpected().into()),
             }
@@ -163,9 +164,13 @@ fn default_calibration_count() -> u64 {
     crate::calibrate::DEFAULT_TEST_COUNT
 }
 
-/// Default thread count: the available parallelism, falling back to 2.
+/// Default thread count: the available parallelism, clamped to the
+/// documented `-x` floor of 2 so a single-core host's default doesn't
+/// contradict the range; 2 is also the fallback when detection fails.
 fn default_threads() -> usize {
-    thread::available_parallelism().map_or(2, std::num::NonZeroUsize::get)
+    thread::available_parallelism()
+        .map_or(2, std::num::NonZeroUsize::get)
+        .max(2)
 }
 
 /// Rejects calibration name lengths outside `1..=255`; 255 is `NAME_MAX` on
@@ -200,14 +205,15 @@ fn parse_threads(x: &str) -> Result<usize, Error> {
 }
 
 /// Normalises a search root, rejecting anything that is not an existing
-/// directory so the walk never starts from a missing or non-dir path.
-fn parse_paths(x: &str) -> Result<PathBuf, Error> {
-    let p = Path::new(x);
+/// directory so the walk never starts from a missing or non-dir path. Takes a
+/// raw `OsStr` so non-UTF-8 roots (legal on Unix) are usable.
+fn parse_paths(x: impl AsRef<OsStr>) -> Result<PathBuf, Error> {
+    let p = Path::new(x.as_ref());
 
     if p.is_dir() {
         Ok(p.normalize()?.into_path_buf())
     } else {
-        Err(anyhow!("'{x}' is not an existing directory"))
+        Err(anyhow!("'{}' is not an existing directory", p.display()))
     }
 }
 
@@ -215,9 +221,10 @@ fn parse_paths(x: &str) -> Result<PathBuf, Error> {
 /// caller can exclude a path (e.g. a virtual filesystem) that is absent on this
 /// host without aborting the whole scan. Existing paths are normalised as
 /// usual; an absent one falls back to its lexical form (normpath's
-/// `normalize_virtually` is Windows-only). Other errors still surface.
-fn parse_skip_paths(x: &str) -> Result<PathBuf, Error> {
-    let p = Path::new(x);
+/// `normalize_virtually` is Windows-only). Other errors still surface. Takes a
+/// raw `OsStr` so non-UTF-8 paths (legal on Unix) are usable.
+fn parse_skip_paths(x: impl AsRef<OsStr>) -> Result<PathBuf, Error> {
+    let p = Path::new(x.as_ref());
     match p.normalize() {
         Ok(n) => Ok(n.into_path_buf()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(p.to_path_buf()),
@@ -268,7 +275,7 @@ fn print_help() {
         crate::walk::BLACKLIST_COUNT
     );
     println!(
-        "  -x, --threads <N>                  Number of threads to use when scanning (2..=65535) [default: CPUs]"
+        "  -x, --threads <N>                  Total thread budget; one is reserved for coordination, N-1 workers scan (2..=65535) [default: CPUs]"
     );
     println!(
         "  -p, --updates <SECONDS>            Seconds between status updates, set to 0 to disable [default: {}]",
@@ -278,7 +285,7 @@ fn print_help() {
         "  -i, --size-inode-ratio <N>         Skip calibration and use this bytes-per-entry ratio directly [default: 0]"
     );
     println!(
-        "  -t, --calibration-path <PATH>      Custom calibration directory path"
+        "  -t, --calibration-path <PATH>      Custom calibration directory path (must be on the same filesystem as PATH)"
     );
     println!(
         "  -s, --skip-path <PATH>             Directories to exclude from scanning (repeatable)"
@@ -303,14 +310,36 @@ pub fn oversubscription_warning(
     })
 }
 
+/// Warns when `-t` is combined with `-i`: the fixed ratio skips calibration
+/// entirely, so the calibration directory is silently unused otherwise.
+#[must_use]
+pub fn ignored_calibration_path_warning(args: &Args) -> Option<String> {
+    (args.size_inode_ratio > 0 && args.calibration_path.is_some()).then(|| {
+        "-t/--calibration-path is ignored when -i/--size-inode-ratio is used"
+            .to_owned()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
     use super::{
-        Args, oversubscription_warning, parse_calibration_count,
-        parse_name_length, parse_paths, parse_skip_paths, parse_threads,
+        Args, default_threads, ignored_calibration_path_warning,
+        oversubscription_warning, parse_calibration_count, parse_name_length,
+        parse_paths, parse_skip_paths, parse_threads,
     };
+
+    mod default_threads {
+        use super::*;
+
+        /// The default never falls below the documented `-x` floor, even on
+        /// single-core hosts or when parallelism detection fails.
+        #[test]
+        fn never_below_documented_floor() {
+            assert!(default_threads() >= 2);
+        }
+    }
 
     mod parse_name_length {
         use super::*;
@@ -419,6 +448,22 @@ mod tests {
         #[test]
         fn rejects_missing_path() {
             assert!(parse_paths("/nonexistent/xyz/abc123").is_err());
+        }
+
+        /// Linux filesystems accept arbitrary path bytes (no UTF-8
+        /// requirement); such a root must parse. The fixture can't be created
+        /// on macOS — APFS validates filenames as UTF-8 (EILSEQ).
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn accepts_non_utf8_path() {
+            use std::os::unix::ffi::OsStrExt;
+
+            let tmp = TempDir::new().unwrap();
+            let mut bytes = tmp.path().as_os_str().as_bytes().to_vec();
+            bytes.extend_from_slice(b"/\xff\xfe");
+            let p = std::ffi::OsStr::from_bytes(&bytes);
+            std::fs::create_dir(p).unwrap();
+            assert!(parse_paths(p).is_ok());
         }
     }
 
@@ -636,6 +681,24 @@ mod tests {
                 Args::try_parse_from(["/nonexistent/xyz/abc123"]).is_err()
             );
         }
+
+        /// A non-UTF-8 positional parses end-to-end through the lexopt loop.
+        /// Linux-only: APFS validates filenames as UTF-8, so the fixture
+        /// directory can't be created on macOS.
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn parses_non_utf8_positional() {
+            use std::ffi::OsString;
+            use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+            let tmp = TempDir::new().unwrap();
+            let mut bytes = tmp.path().as_os_str().as_bytes().to_vec();
+            bytes.extend_from_slice(b"/\xff\xfe");
+            std::fs::create_dir(std::ffi::OsStr::from_bytes(&bytes)).unwrap();
+
+            let a = Args::try_parse_from([OsString::from_vec(bytes)]).unwrap();
+            assert_eq!(a.path.len(), 1);
+        }
     }
 
     mod oversubscription_warning {
@@ -658,6 +721,38 @@ mod tests {
             assert!(oversubscription_warning(8, 8).is_none());
             assert!(oversubscription_warning(4, 8).is_none());
             assert!(oversubscription_warning(2, 8).is_none());
+        }
+    }
+
+    mod ignored_calibration_path_warning {
+        use super::*;
+
+        /// `-i` with `-t`: the fixed ratio skips calibration, so the
+        /// calibration directory would be silently unused — warn.
+        #[test]
+        fn warns_when_ratio_and_path_combined() {
+            let args = Args {
+                size_inode_ratio: 5,
+                calibration_path: Some("/tmp".into()),
+                ..Args::default()
+            };
+            assert!(ignored_calibration_path_warning(&args).is_some());
+        }
+
+        /// Either flag alone (or neither) is a coherent configuration — no
+        /// warning.
+        #[test]
+        fn silent_when_flags_not_combined() {
+            let ratio_only = Args { size_inode_ratio: 5, ..Args::default() };
+            let path_only = Args {
+                calibration_path: Some("/tmp".into()),
+                ..Args::default()
+            };
+            assert!(ignored_calibration_path_warning(&ratio_only).is_none());
+            assert!(ignored_calibration_path_warning(&path_only).is_none());
+            assert!(
+                ignored_calibration_path_warning(&Args::default()).is_none()
+            );
         }
     }
 }

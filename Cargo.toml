@@ -28,6 +28,7 @@ normpath = "1.5.1"
 crossbeam-deque = "0.8"
 crossbeam-utils = "0.8"
 rustix = { version = "1", features = ["fs"] }
+libc = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = [

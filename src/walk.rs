@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: MIT
 
 use std::fs::Metadata;
-use std::fs::read_dir;
-use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,11 +74,8 @@ impl CalContext<'_> {
     /// fixed `-i` ratio short-circuits without touching the filesystem; an
     /// unwritable filesystem or a failed calibration disables flagging for it.
     /// The scan spinner is paused for the duration so calibration's own output
-    /// (start/done lines and its spinner) renders cleanly.
+    /// (start/done lines) renders cleanly.
     fn calibrate(&self, sample_path: &Path) -> Calibration {
-        const DISABLED: Calibration =
-            Calibration { per_entry: 0, overhead: 0 };
-
         if self.args.size_inode_ratio > 0 {
             return Calibration {
                 per_entry: self.args.size_inode_ratio,
@@ -95,7 +90,7 @@ impl CalContext<'_> {
                      size-based flagging disabled there",
                     sample_path.display()
                 );
-                return DISABLED;
+                return Calibration::DISABLED;
             }
 
             let tmp = match TempDir::new_in(sample_path) {
@@ -106,7 +101,7 @@ impl CalContext<'_> {
                          size-based flagging disabled there",
                         sample_path.display()
                     );
-                    return DISABLED;
+                    return Calibration::DISABLED;
                 }
             };
             calibrate::get_inode_ratio(
@@ -115,7 +110,7 @@ impl CalContext<'_> {
                 self.shutdown,
                 self.args,
             )
-            .unwrap_or(DISABLED)
+            .unwrap_or(Calibration::DISABLED)
         })
     }
 }
@@ -164,7 +159,7 @@ pub fn parallel_search(
     });
 
     let cal = CalContext {
-        root_dev: path_metadata.dev(),
+        root_dev: crate::compat::dev(path_metadata),
         root: calibration,
         foreign: Mutex::new(AHashMap::new()),
         shutdown: shutdown_walk,
@@ -178,11 +173,13 @@ pub fn parallel_search(
         report_dir(path, ino, size, entries, args);
     };
 
+    let stats = engine::WalkStats::default();
     engine::walk_dirs(
         path,
         args.threads,
         args.follow_symlinks,
         shutdown_walk,
+        &stats,
         classify,
         report,
     );
@@ -195,6 +192,30 @@ pub fn parallel_search(
 
     scan_pb.finish_with_message("Done.");
 
+    // Dropped or under-counted directories mean under-scanning; surface them
+    // rather than staying silent. Loops get their own line: they are not
+    // failures, but invisible ones (and duplicate-inode false positives)
+    // would silently skip real subtrees.
+    let stat_errors = stats.stat_errors.load(Ordering::Relaxed);
+    let open_errors = stats.open_errors.load(Ordering::Relaxed);
+    let read_errors = stats.read_errors.load(Ordering::Relaxed);
+    let dropped = stat_errors + open_errors + read_errors;
+    if dropped > 0 {
+        println!(
+            "Note: {dropped} directories could not be fully examined \
+             ({stat_errors} stat failures, {open_errors} open failures, \
+             {read_errors} read failures mid-enumeration; permissions or \
+             races), their subtrees were skipped or under-counted"
+        );
+    }
+    let loop_hits = stats.loop_hits.load(Ordering::Relaxed);
+    if loop_hits > 0 {
+        println!(
+            "Note: {loop_hits} filesystem loops detected (bind mounts or \
+             symlink cycles), cyclic paths were skipped"
+        );
+    }
+
     dir_count.load(Ordering::Relaxed)
 }
 
@@ -204,7 +225,9 @@ pub fn parallel_search(
 /// since reading a true black hole is the cost we refuse to pay. Everything else
 /// descends and is judged on its exact count by [`report_dir`]. A blacklisted
 /// (skipped) subtree is reported here from the estimate, or, with `-a`, an
-/// explicit `read_dir` the caller opts into despite the cost.
+/// exact count via the walk's leaf (`O_NOFOLLOW`, so a mid-scan swap to a
+/// symlink errors out instead of counting the wrong tree) the caller opts
+/// into despite the cost.
 fn classify_dir(
     info: &engine::DirInfo,
     cal: &CalContext,
@@ -251,8 +274,8 @@ fn classify_dir(
 
     if approx_files > args.blacklist_threshold {
         let (count, exact) = if args.accurate {
-            match read_dir(full_path) {
-                Ok(r) => (r.count() as u64, true),
+            match info.count_entries() {
+                Ok(n) => (n, true),
                 Err(e) => {
                     println!(
                         "Warning: unable to get exact count for {}, using estimate: {e}",
@@ -509,6 +532,21 @@ mod tests {
             }
         }
 
+        /// Most classify tests never take the accurate branch, so the counter
+        /// is never invoked; a stub satisfies the field.
+        // The Result signature is forced by DirInfo's dyn Fn field.
+        #[allow(clippy::unnecessary_wraps)]
+        fn stub_count(_: &Path) -> std::io::Result<u64> {
+            Ok(0)
+        }
+
+        /// Counts like the production leaf: via an actual directory read.
+        // The Result signature is forced by DirInfo's dyn Fn field.
+        #[allow(clippy::unnecessary_wraps)]
+        fn real_count(p: &Path) -> std::io::Result<u64> {
+            Ok(std::fs::read_dir(p)?.count() as u64)
+        }
+
         /// Overhead is subtracted before dividing: a directory whose *raw* size
         /// would blacklist is not skipped once the fixed overhead is removed.
         /// Guards against dropping the subtraction or using the wrong field.
@@ -524,6 +562,7 @@ mod tests {
                 dev: 0,
                 ino: 0,
                 size: 1050,
+                count: &stub_count,
             };
             let d = classify_dir(
                 &info,
@@ -548,6 +587,7 @@ mod tests {
                 dev: 0,
                 ino: 0,
                 size: 5000,
+                count: &stub_count,
             };
             let d = classify_dir(
                 &info,
@@ -573,6 +613,7 @@ mod tests {
                 dev: 0,
                 ino: 0,
                 size: 100,
+                count: &stub_count,
             };
             assert!(matches!(
                 classify_dir(
@@ -590,6 +631,7 @@ mod tests {
                 dev: 0,
                 ino: 0,
                 size: 101,
+                count: &stub_count,
             };
             assert!(matches!(
                 classify_dir(
@@ -612,8 +654,13 @@ mod tests {
             let mut skip = AHashSet::new();
             skip.insert(p.clone());
             let count = AtomicU64::new(0);
-            let info =
-                engine::DirInfo { path: &p, dev: 0, ino: 0, size: 9999 };
+            let info = engine::DirInfo {
+                path: &p,
+                dev: 0,
+                ino: 0,
+                size: 9999,
+                count: &stub_count,
+            };
             let d = classify_dir(
                 &info,
                 &ctx(0, cal(1, 0), &args, &sd),
@@ -639,6 +686,7 @@ mod tests {
                 dev: 99,
                 ino: 0,
                 size: 9999,
+                count: &stub_count,
             };
             let d = classify_dir(&info, &cx, &args, &AHashSet::new(), &count);
             assert!(matches!(d, engine::Decision::Skip));
@@ -661,6 +709,7 @@ mod tests {
                 dev: 0,
                 ino: 0,
                 size: u64::MAX,
+                count: &stub_count,
             };
             let d = classify_dir(
                 &info,
@@ -691,6 +740,7 @@ mod tests {
                 dev: 0,
                 ino: 0,
                 size: 4096,
+                count: &real_count,
             };
             let d = classify_dir(
                 &info,
