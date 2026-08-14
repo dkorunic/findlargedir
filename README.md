@@ -156,4 +156,4 @@ built for.
 
 ## Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=dkorunic/findlargedir&type=Date)](https://star-history.com/#dkorunic/findlargedir&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=dkorunic/findlargedir&type=Date)](https://star-history.com/#dkorunic/findlargedir&Date)
